@@ -46,7 +46,7 @@ Installer options:
 | Variable                | Purpose                                                      |
 | ----------------------- | ------------------------------------------------------------ |
 | `ARELAY_PREFIX`         | Installation prefix; defaults to `~/.local`                  |
-| `ARELAY_VERSION=v0.2.0` | Pin a release instead of downloading the latest              |
+| `ARELAY_VERSION=v0.2.1` | Pin a release instead of downloading the latest              |
 | `ARELAY_NO_SERVICE=1`   | Install the binary only; skip setup and service installation |
 | `ARELAY_NO_TUI=1`       | Install/start the service without opening the wizard         |
 

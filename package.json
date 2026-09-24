@@ -1,6 +1,6 @@
 {
   "name": "arelay",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Use OpenAI subagents in Claude Code, and Claude subagents in Codex.",
   "type": "module",
   "private": true,
