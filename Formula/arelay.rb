@@ -3,7 +3,7 @@ class Arelay < Formula
   homepage "https://github.com/wrsrsh/arelay"
   url "https://github.com/wrsrsh/arelay/releases/download/v0.1.0/arelay.tar.gz"
   version "0.1.0"
-  sha256 "dbfdb1299e25523c7b5699e0ead4d0e91cb9d5f3ad98b7d8c34c061d7655d018"
+  sha256 "5921ff5d3bd4b7341be85cf68fd99a7ef85d8fdac9e561d93f238d34a43266e9"
   license all_of: ["MIT", "Apache-2.0", "BSD-3-Clause"]
 
   depends_on "node"
