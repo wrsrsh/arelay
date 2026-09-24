@@ -31,6 +31,12 @@ test "$("$ARELAY_PREFIX/bin/arelay" --version)" = "$VERSION"
 # An update is idempotent and the resulting CLI still works.
 sh "$ROOT/install.sh"
 "$ARELAY_PREFIX/bin/arelay" --help >/dev/null
+# Exercise curl-style piped stdin in a real terminal, then cancel before any config/service writes.
+ARELAY_NO_SERVICE=0 ARELAY_PREFIX="$TMP/interactive-prefix" \
+ARELAY_HOME="$TMP/interactive-config" CLAUDE_CONFIG_DIR="$TMP/claude" CODEX_HOME="$TMP/codex" \
+ARELAY_TEST_INSTALLER="$ROOT/install.sh" \
+python3 "$ROOT/scripts/test-wizard-pty.py" escape sh -c 'cat "$ARELAY_TEST_INSTALLER" | sh'
+test ! -e "$TMP/interactive-config"
 # A checksum failure must not install an executable.
 printf 'tampered' >> "$TMP/downloads/arelay.tar.gz"
 export ARELAY_PREFIX="$TMP/rejected"
@@ -39,4 +45,4 @@ if sh "$ROOT/install.sh" >"$TMP/rejection.log" 2>&1; then
   exit 1
 fi
 test ! -e "$ARELAY_PREFIX/bin/arelay"
-echo 'Offline installation, repeat installation, CLI, and checksum rejection passed.'
+echo 'Offline installation, piped interactive onboarding, cancellation, CLI, and checksum rejection passed.'

@@ -14,6 +14,7 @@ import {
 } from "./protocol/index.js";
 
 import { routeCodexResponse, routeCodexStream } from "./protocol/subagents.js";
+import { VERSION } from "./version.js";
 
 const HOP = new Set([
   "host",
@@ -127,7 +128,7 @@ export function createRelay(
         return;
       }
       if (req.method === "GET" && req.url === "/health")
-        return json(res, 200, { ok: true, version: "0.1.0" });
+        return json(res, 200, { ok: true, version: VERSION });
       if (req.method === "GET" && req.url === "/stats")
         return json(res, 200, stats);
       if (req.method !== "POST")
@@ -202,6 +203,17 @@ export function createRelay(
             value !== undefined
           )
             headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+        }
+        // Generated Codex providers authenticate to this local relay without a key.
+        // Use arelay's saved backend key only when no client auth was supplied.
+        if (
+          !anthropic &&
+          !["authorization", "api-key", "x-api-key"].some((name) =>
+            headers.has(name),
+          )
+        ) {
+          for (const [name, value] of Object.entries(credentials(backend)))
+            headers.set(name, value);
         }
         const upstream = await fetch(
           endpoint(backend, url.pathname + url.search),

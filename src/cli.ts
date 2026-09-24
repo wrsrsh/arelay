@@ -3,13 +3,19 @@ import { initConfig, loadConfig, loadCredentials, paths } from "./config.js";
 import { createRelay } from "./server.js";
 import { setupClient, restoreClient } from "./setup.js";
 import { service } from "./service.js";
+import { VERSION } from "./version.js";
+import { createTerminalUI, interactiveTerminal } from "./onboarding/ui.js";
+import { runWizard } from "./onboarding/wizard.js";
+import { wizardServices } from "./onboarding/state.js";
 
-const HELP = `arelay 0.1.0 — cross-provider subagents
+const HELP = `arelay ${VERSION} — cross-provider subagents
 
 Usage: arelay <command>
-  install                 Create config; install and start the login service
+  install                 Open setup in a terminal; otherwise start the service
+  install --no-interactive Start the service without prompting
+  setup                   Open the interactive provider/model/routing wizard
   init                    Create config without starting or changing clients
-  setup claude|codex|both  Back up and configure selected clients
+  setup claude|codex|both  Back up and configure clients without prompting
   unsetup claude|codex|both Restore client configs (refuses to erase later edits)
   serve                   Run the relay in the foreground
   status                  Check the local service
@@ -20,7 +26,9 @@ Usage: arelay <command>
 
 Config: ~/.config/arelay/config.json (override with ARELAY_HOME)
 Credentials: ~/.config/arelay/credentials.env; or macOS Keychain by env name
-Installation never changes Claude/Codex settings; run setup explicitly.
+The wizard previews changes and asks before editing client settings.
+Use ARELAY_NO_TUI=1 or --no-interactive for unattended installation.
+NO_COLOR disables colors. Existing explicit setup commands remain noninteractive.
 Restore clients before stopping/removing arelay, or their requests will fail.
 `;
 
@@ -32,14 +40,24 @@ async function check(endpoint: "health" | "stats"): Promise<unknown> {
   if (!response.ok) throw new Error(`Service returned HTTP ${response.status}`);
   return response.json();
 }
+async function onboarding(): Promise<void> {
+  if (!interactiveTerminal())
+    throw new Error(
+      "Interactive setup needs a terminal. Run arelay setup in your terminal, or use arelay setup claude|codex|both for scripted setup.",
+    );
+  const result = await runWizard(createTerminalUI(), wizardServices);
+  if (result === "service-failed") process.exitCode = 1;
+}
+
 async function main(): Promise<void> {
-  const [command = "help", ...args] = process.argv.slice(2);
+  const [command = interactiveTerminal() ? "setup" : "help", ...args] =
+    process.argv.slice(2);
   if (["help", "--help", "-h"].includes(command)) {
     console.log(HELP);
     return;
   }
   if (command === "--version") {
-    console.log("0.1.0");
+    console.log(VERSION);
     return;
   }
   if (command === "init") {
@@ -48,10 +66,24 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "install") {
+    if (
+      args.some(
+        (arg) => !["--no-interactive", "--interactive"].includes(arg),
+      ) ||
+      args.length > 1
+    )
+      throw new Error("Usage: arelay install [--no-interactive|--interactive]");
+    if (
+      args[0] === "--interactive" ||
+      (args[0] !== "--no-interactive" && interactiveTerminal())
+    ) {
+      await onboarding();
+      return;
+    }
     await initConfig();
     await service("install");
     console.log(
-      `arelay installed and started. It will run at login.\nConfigure backends in ${paths().config}, then run arelay setup claude|codex|both.\nOn Linux, keep it running after logout with: loginctl enable-linger "$USER"`,
+      `arelay installed and started. It will run at login.\nRun arelay setup in your terminal to choose providers, models, and routes.\nConfig: ${paths().config}\nOn Linux, keep it running after logout with: loginctl enable-linger "$USER"`,
     );
     return;
   }
@@ -67,6 +99,10 @@ async function main(): Promise<void> {
       );
     await service(args[0]!);
     console.log(`Service: ${args[0]}`);
+    return;
+  }
+  if (command === "setup" && args.length === 0) {
+    await onboarding();
     return;
   }
   if (command === "setup" || command === "unsetup") {

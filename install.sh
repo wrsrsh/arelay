@@ -49,7 +49,15 @@ chmod 755 "$TARGET/arelay.mjs"
 ln -sfn "$TARGET" "$PREFIX/share/arelay/current"
 ln -sfn "$PREFIX/share/arelay/current/arelay.mjs" "$PREFIX/bin/arelay"
 if [ "${ARELAY_NO_SERVICE:-0}" != 1 ]; then
-  "$PREFIX/bin/arelay" install
+  # curl | sh owns stdin. Give the wizard the controlling terminal, not the script pipe.
+  # Keep redirected output, CI and explicit opt-outs fully noninteractive.
+  case "${CI:-}" in ''|0|false|FALSE) IN_CI=0 ;; *) IN_CI=1 ;; esac
+  case "${ARELAY_NO_TUI:-}" in ''|0|false|FALSE) NO_TUI=0 ;; *) NO_TUI=1 ;; esac
+  if [ -t 1 ] && [ "$IN_CI" = 0 ] && [ "$NO_TUI" = 0 ] && [ "${TERM:-}" != dumb ] && ( : </dev/tty ) 2>/dev/null; then
+    "$PREFIX/bin/arelay" install --interactive </dev/tty
+  else
+    "$PREFIX/bin/arelay" install --no-interactive
+  fi
 else
   echo 'Service installation skipped (ARELAY_NO_SERVICE=1). Run arelay install later.'
 fi
