@@ -103,6 +103,24 @@ async function run(
       );
   }
 }
+/** bootout can return before launchd releases a registration. Retry only the
+ * idempotent bootstrap operation; never repeat file writes or client changes. */
+export async function bootstrapWithRetry(
+  operation: () => Promise<void>,
+  sleep: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await operation();
+      return;
+    } catch (error) {
+      if (attempt === 4) throw error;
+      await sleep(150 * 2 ** attempt);
+    }
+  }
+}
+
 export async function service(action: string): Promise<void> {
   const file = serviceFile();
   const domain = `gui/${process.getuid?.()}`;
@@ -125,7 +143,9 @@ export async function service(action: string): Promise<void> {
     );
     if (process.platform === "darwin") {
       await run("launchctl", ["enable", target]);
-      await run("launchctl", ["bootstrap", domain, file]);
+      await bootstrapWithRetry(() =>
+        run("launchctl", ["bootstrap", domain, file]),
+      );
     } else {
       await run("systemctl", ["--user", "daemon-reload"]);
       await run("systemctl", ["--user", "enable", "--now", "arelay.service"]);
@@ -148,7 +168,9 @@ export async function service(action: string): Promise<void> {
         await exec("launchctl", ["print", target], { timeout: 5000 });
         await run("launchctl", ["kickstart", target]);
       } catch {
-        await run("launchctl", ["bootstrap", domain, file]);
+        await bootstrapWithRetry(() =>
+          run("launchctl", ["bootstrap", domain, file]),
+        );
       }
     }
   } else {

@@ -10,7 +10,11 @@ import {
   initConfig,
   validateConfig,
 } from "../src/config.js";
-import { launchAgent, systemdUnit } from "../src/service.js";
+import {
+  bootstrapWithRetry,
+  launchAgent,
+  systemdUnit,
+} from "../src/service.js";
 import { codexCatalog } from "../src/catalog.js";
 
 for (const [name, edit] of Object.entries({
@@ -104,6 +108,51 @@ test("systemd unit escapes path expansion and uses a user login service", () => 
     /control characters/,
   );
 });
+test("launchd registration retries transient teardown failures without repeating successful work", async () => {
+  let calls = 0;
+  const delays: number[] = [];
+  await bootstrapWithRetry(
+    async () => {
+      calls++;
+      if (calls < 3) throw new Error("registration not released");
+    },
+    async (ms) => {
+      delays.push(ms);
+    },
+  );
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [150, 300]);
+});
+
+test("launchd registration preserves permanent errors after bounded retries", async () => {
+  let calls = 0;
+  const failure = new Error("invalid agent");
+  await assert.rejects(
+    bootstrapWithRetry(
+      async () => {
+        calls++;
+        throw failure;
+      },
+      async () => {},
+    ),
+    (error) => error === failure,
+  );
+  assert.equal(calls, 5);
+});
+
+test("successful launchd registration is not retried", async () => {
+  let calls = 0;
+  await bootstrapWithRetry(
+    async () => {
+      calls++;
+    },
+    async () => {
+      assert.fail("unexpected retry");
+    },
+  );
+  assert.equal(calls, 1);
+});
+
 test("Codex catalog preserves custom main metadata and registers a routable Claude model", async () => {
   const dir = await mkdtemp(join(tmpdir(), "arelay-catalog-"));
   try {
