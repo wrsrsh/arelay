@@ -1,8 +1,8 @@
 class Arelay < Formula
   desc "Run OpenAI subagents in Claude Code and Claude subagents in Codex"
   homepage "https://github.com/wrsrsh/arelay"
-  url "https://github.com/wrsrsh/arelay/releases/download/v0.1.0/arelay.tar.gz"
-  sha256 "5921ff5d3bd4b7341be85cf68fd99a7ef85d8fdac9e561d93f238d34a43266e9"
+  url "https://github.com/wrsrsh/arelay/releases/download/v0.2.0/arelay.tar.gz"
+  sha256 "e6e2b58d236b423d01493dd9765679b62324c765c6c64e133838c3e99074300d"
   license all_of: ["MIT", "Apache-2.0", "BSD-3-Clause"]
 
   depends_on "node"
@@ -17,9 +17,10 @@ class Arelay < Formula
     <<~EOS
       arelay manages its own login service (not brew services).
       Config: ~/.config/arelay/config.json
-      Add API credentials, then run: arelay setup claude|codex|both
+      Choose providers, models, credentials, and routes: arelay setup
       Before uninstalling: arelay unsetup both && arelay service uninstall
-      Start and enable the login service: arelay install
+      Open setup and enable the login service: arelay install
+      For unattended installation: arelay install --no-interactive
     EOS
   end
 
