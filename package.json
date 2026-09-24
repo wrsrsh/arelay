@@ -1,0 +1,36 @@
+{
+  "name": "arelay",
+  "version": "0.1.0",
+  "description": "Use OpenAI subagents in Claude Code, and Claude subagents in Codex.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "bin": {
+    "arelay": "dist/arelay.mjs"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "node scripts/build.mjs",
+    "package": "pnpm build && node scripts/package.mjs",
+    "smoke:clients": "tsx scripts/smoke-subagents.ts && tsx scripts/smoke-claude-subagents.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm typecheck && pnpm test && pnpm format:check && pnpm build"
+  },
+  "dependencies": {
+    "smol-toml": "^1.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "prettier": "^3.6.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
