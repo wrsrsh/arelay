@@ -6,6 +6,7 @@ import { parse, stringify } from "smol-toml";
 import { atomicWrite, paths, validateConfig } from "./config.js";
 import type { Config } from "./types.js";
 import { codexCatalog } from "./catalog.js";
+import type { SetupPreview } from "./onboarding/types.js";
 
 type Client = "claude" | "codex";
 type Table = Record<string, unknown>;
@@ -154,19 +155,15 @@ function claudePlan(original: Buffer | null, config: Config): Plan {
   return { content: JSON.stringify(settings, null, 2) + "\n", generated: [] };
 }
 
-function environmentKey(config: Config): string | undefined {
-  return [config.openai.apiKeyEnv, "OPENAI_API_KEY"].find((key) =>
-    process.env[key]?.trim(),
-  );
-}
-
-function requireApiKey(config: Config): string {
-  const key = environmentKey(config);
-  if (!key)
+function requireApiKey(
+  config: Config,
+  availableKeys?: ReadonlySet<string>,
+): void {
+  const key = config.openai.apiKeyEnv;
+  if (!availableKeys?.has(key) && !process.env[key]?.trim())
     throw new Error(
-      `Codex requires an API-key provider: set ${config.openai.apiKeyEnv} or OPENAI_API_KEY in the environment. ChatGPT subscription authentication cannot be transparently proxied.`,
+      `Codex requires an API-key provider: set ${key} in the environment or configure it for arelay. ChatGPT subscription authentication cannot be transparently proxied.`,
     );
-  return key;
 }
 
 function assertUpstream(base: unknown, config: Config): void {
@@ -189,6 +186,7 @@ async function codexPlan(
   target: string,
   directory: string,
   config: Config,
+  availableKeys?: ReadonlySet<string>,
 ): Promise<Plan> {
   // Preserve dates and large integers as well as unrelated tables/settings.
   const settings: Table =
@@ -253,13 +251,12 @@ async function codexPlan(
       process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
       config,
     );
-    const key = requireApiKey(config);
+    requireApiKey(config, availableKeys);
     if (Object.hasOwn(providers, "arelay"))
       throw priorIntegration("A Codex provider named arelay already exists");
     providers.arelay = {
       name: "arelay",
       base_url: localBase,
-      env_key: key,
       requires_openai_auth: false,
       wire_api: "responses",
       supports_websockets: false,
@@ -333,6 +330,7 @@ function metadataPath(directory: string): string {
 }
 
 async function installation(directory: string): Promise<Installation | null> {
+  await optionalDirectory(directory, "Setup state");
   const bytes = await optionalFile(metadataPath(directory));
   if (bytes === null) {
     // An incomplete/private directory is not permission to replace a backup.
@@ -383,6 +381,8 @@ async function verifyInstallation(
     throw new Error(
       `Refusing to overwrite ${target}: it changed since setup. Preserve your edits and restore the installed bytes before retrying.`,
     );
+  if (saved.generated.length)
+    await optionalDirectory(join(directory, "agents"), "Generated agent state");
   for (const file of saved.generated) {
     if (
       digest(await optionalFile(join(directory, "agents", file.name))) !==
@@ -391,6 +391,97 @@ async function verifyInstallation(
       throw new Error(
         "A generated agent config changed since setup; refusing to erase edits",
       );
+  }
+}
+
+async function optionalDirectory(path: string, label: string): Promise<void> {
+  try {
+    if (!(await lstat(path)).isDirectory())
+      throw new Error(
+        `${label} must be a real directory, not a symlink: ${path}`,
+      );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+// Unlike withStateLock, this check never creates state or changes permissions.
+// lstat also detects dangling symlinks without following them.
+async function checkPreviewState(client: Client): Promise<void> {
+  const state = paths().state;
+  await optionalDirectory(state, "arelay state");
+  const lock = join(state, `${client}-setup.lock`);
+  try {
+    await lstat(lock);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error(
+    `Setup/restore is already running, or left a stale lock at ${lock}`,
+  );
+}
+
+async function planSetup(
+  client: Client,
+  config: Config,
+  target: string,
+  directory: string,
+  availableKeys?: ReadonlySet<string>,
+): Promise<{ original: Buffer | null; plan: Plan } | null> {
+  const saved = await installation(directory);
+  if (saved !== null) {
+    await verifyInstallation(saved, client, target, directory);
+    if (saved.fingerprint !== fingerprint(client, config))
+      throw new Error(
+        "arelay setup parameters changed; restore this client before setting it up again",
+      );
+    return null; // Never back up an already-managed configuration.
+  }
+  const original = await optionalFile(target);
+  const plan =
+    client === "claude"
+      ? claudePlan(original, config)
+      : await codexPlan(original, target, directory, config, availableKeys);
+  return { original, plan };
+}
+
+export async function previewClientSetup(
+  client: Client,
+  config: Config,
+  availableKeys?: ReadonlySet<string>,
+): Promise<SetupPreview> {
+  try {
+    validateConfig(config);
+    const target = clientPath(client);
+    await checkPreviewState(client);
+    const planned = await planSetup(
+      client,
+      config,
+      target,
+      join(paths().state, `${client}-setup`),
+      availableKeys,
+    );
+    // A preview is advisory, but do not report ready if setup acquired a lock
+    // while the client/role/catalog inputs were being read.
+    await checkPreviewState(client);
+    return planned === null
+      ? {
+          status: "managed",
+          message: `${client} is already managed by arelay.`,
+        }
+      : { status: "ready", message: `${client} is ready for arelay setup.` };
+  } catch (error) {
+    return {
+      status: "blocked",
+      message:
+        error instanceof Error &&
+        (error.name === "SyntaxError" || error.name === "TomlError")
+          ? "Client configuration is not valid JSON/TOML. Fix it before applying setup."
+          : error instanceof Error
+            ? error.message
+            : "Client configuration could not be checked",
+    };
   }
 }
 
@@ -429,24 +520,21 @@ async function withStateLock(
 export async function setupClient(
   client: Client,
   config: Config,
-): Promise<void> {
+  options?: { availableKeys?: ReadonlySet<string> },
+): Promise<{ changed: boolean }> {
   validateConfig(config);
   const target = clientPath(client);
+  let changed = false;
   await withStateLock(client, async (directory) => {
-    const saved = await installation(directory);
-    if (saved !== null) {
-      await verifyInstallation(saved, client, target, directory);
-      if (saved.fingerprint !== fingerprint(client, config))
-        throw new Error(
-          "arelay setup parameters changed; restore this client before setting it up again",
-        );
-      return; // Never back up an already-managed configuration.
-    }
-    const original = await optionalFile(target);
-    const plan =
-      client === "claude"
-        ? claudePlan(original, config)
-        : await codexPlan(original, target, directory, config);
+    const planned = await planSetup(
+      client,
+      config,
+      target,
+      directory,
+      options?.availableKeys,
+    );
+    if (planned === null) return;
+    const { original, plan } = planned;
     // Every parse, provider/auth check, role read, and serialization completes
     // before writing any backup/generated files or changing the user config.
     const metadata: Installation = {
@@ -478,14 +566,23 @@ export async function setupClient(
           "Client configuration changed during setup; refusing to overwrite it",
         );
       await atomicWrite(target, plan.content);
+      changed = true;
     } catch (error) {
-      // If the final rename succeeded, retain the recovery data. Otherwise no
-      // user file was changed by us, so the staged installation can be removed.
-      if (digest(await optionalFile(target)) !== metadata.installedHash)
-        await rm(directory, { recursive: true, force: true });
+      // Only discard staging when the target provably still matches the
+      // original. Drift, a successful rename, or an unreadable target must
+      // retain recovery data; cleanup must not mask the original failure.
+      try {
+        if (digest(await optionalFile(target)) === metadata.originalHash)
+          await rm(directory, { recursive: true, force: true });
+      } catch {
+        throw new Error(
+          `Setup failed and cleanup could not be verified; preserve recovery data at ${directory} and inspect the client configuration before retrying`,
+        );
+      }
       throw error;
     }
   });
+  return { changed };
 }
 
 export async function restoreClient(client: Client): Promise<void> {

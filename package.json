@@ -1,6 +1,6 @@
 {
   "name": "arelay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Use OpenAI subagents in Claude Code, and Claude subagents in Codex.",
   "type": "module",
   "private": true,
@@ -24,6 +24,7 @@
     "check": "pnpm typecheck && pnpm test && pnpm format:check && pnpm build"
   },
   "dependencies": {
+    "@clack/prompts": "^1.8.1",
     "smol-toml": "^1.4.2"
   },
   "devDependencies": {

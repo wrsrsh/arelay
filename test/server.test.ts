@@ -146,6 +146,18 @@ test("Main-model requests preserve model, payload, query and client auth", async
   assert.equal(f.requests[0]!.path, "/v1/messages?beta=true");
   assert.equal(f.requests[0]!.headers["x-api-key"], "client-key");
 });
+test("Generated Codex providers use the relay key without a client-side environment variable", async (t) => {
+  const f = await fixture(t);
+  const response = await f.post("/v1/responses", {
+    model: "gpt-main",
+    input: "hi",
+    stream: false,
+  });
+  assert.equal(response.status, 200);
+  assert.equal(f.requests[0]!.headers.authorization, "Bearer backend-secret");
+  assert.equal(f.requests[0]!.body.model, "gpt-main");
+});
+
 test("Local health, Claude connectivity probe and stats work without model credentials", async (t) => {
   const f = await fixture(t);
   delete process.env.ARELAY_TEST_KEY;

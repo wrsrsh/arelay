@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import {
   chmod,
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
   readdir,
+  readlink,
   rm,
   stat,
   symlink,
@@ -12,10 +16,14 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import test from "node:test";
+import test, { mock } from "node:test";
 import { parse, stringify } from "smol-toml";
 import { defaultConfig, paths } from "../src/config.js";
-import { restoreClient, setupClient } from "../src/setup.js";
+import {
+  previewClientSetup,
+  restoreClient,
+  setupClient,
+} from "../src/setup.js";
 import type { Config } from "../src/types.js";
 
 type Client = "claude" | "codex";
@@ -86,6 +94,71 @@ function stateDir(client: Client): string {
 async function roles(path: string): Promise<Record<string, Table>> {
   return (await toml(path)).agents as Record<string, Table>;
 }
+// Include directory modes and symlink destinations without following links.
+async function filesystemSnapshot(directory: string): Promise<unknown> {
+  const info = await lstat(directory);
+  const mode = info.mode & 0o7777;
+  if (info.isSymbolicLink()) return { mode, link: await readlink(directory) };
+  if (!info.isDirectory()) return { mode, bytes: await readFile(directory) };
+  const entries: Record<string, unknown> = {};
+  for (const name of (await readdir(directory)).sort())
+    entries[name] = await filesystemSnapshot(join(directory, name));
+  return { mode, entries };
+}
+
+function assertEnvironmentUnchanged(before: NodeJS.ProcessEnv): void {
+  // Do not include real shell credentials in assertion failure output.
+  assert.ok(
+    Object.keys(process.env).length === Object.keys(before).length &&
+      Object.entries(before).every(
+        ([key, value]) => process.env[key] === value,
+      ),
+    "process environment changed",
+  );
+}
+
+async function previewWithoutChanges(
+  f: Fixture,
+  client: Client,
+  status: "ready" | "managed" | "blocked",
+  message?: RegExp,
+  availableKeys?: ReadonlySet<string>,
+): Promise<void> {
+  const before = await filesystemSnapshot(f.root);
+  const environment = { ...process.env };
+  const spies = [
+    mock.method(fs, "mkdir", async () => {
+      throw new Error("preview called mkdir");
+    }),
+    mock.method(fs, "chmod", async () => {
+      throw new Error("preview called chmod");
+    }),
+    mock.method(fs, "writeFile", async () => {
+      throw new Error("preview called writeFile");
+    }),
+    mock.method(fs, "rename", async () => {
+      throw new Error("preview called rename");
+    }),
+    mock.method(fs, "rm", async () => {
+      throw new Error("preview called rm");
+    }),
+  ];
+  syncBuiltinESMExports();
+  try {
+    const preview = await previewClientSetup(client, f.config, availableKeys);
+    assert.equal(preview.status, status);
+    assert.equal(typeof preview.message, "string");
+    assert.ok(preview.message.trim().length > 0);
+    if (message) assert.match(preview.message, message);
+    for (const spy of spies) assert.equal(spy.mock.callCount(), 0);
+    assertEnvironmentUnchanged(environment);
+    assert.deepEqual(await filesystemSnapshot(f.root), before);
+  } finally {
+    for (const spy of spies) spy.mock.restore();
+    syncBuiltinESMExports();
+  }
+}
+
 async function snapshots(directory: string): Promise<Record<string, Buffer>> {
   const entries: Record<string, Buffer> = {};
   for (const file of await readdir(directory, { withFileTypes: true })) {
@@ -238,7 +311,6 @@ scenario(
         name: "arelay",
         base_url: `http://127.0.0.1:${f.config.port}/v1`,
         wire_api: "responses",
-        env_key: "OPENAI_API_KEY",
         requires_openai_auth: false,
         supports_websockets: false,
       },
@@ -379,7 +451,12 @@ scenario(
     const settings = await toml(f.codex);
     assert.equal(
       ((settings.model_providers as Table).arelay as Table).env_key,
-      "ARELAY_TEST_OPENAI_KEY",
+      undefined,
+    );
+    assert.equal(
+      ((settings.model_providers as Table).arelay as Table)
+        .requires_openai_auth,
+      false,
     );
     assert.ok(!(await readFile(f.codex, "utf8")).includes("test-secret"));
   },
@@ -536,10 +613,12 @@ for (const client of ["claude", "codex"] as const) {
     async (f) => {
       process.env.OPENAI_API_KEY = "test";
       await restoreClient(client);
-      await setupClient(client, f.config);
+      assert.deepEqual(await setupClient(client, f.config), { changed: true });
       const installed = await readFile(f[client]);
       const state = await snapshots(stateDir(client));
-      await setupClient(client, structuredClone(f.config));
+      assert.deepEqual(await setupClient(client, structuredClone(f.config)), {
+        changed: false,
+      });
       assert.deepEqual(await readFile(f[client]), installed);
       assert.deepEqual(await snapshots(stateDir(client)), state);
       await restoreClient(client);
@@ -563,6 +642,7 @@ for (const client of ["claude", "codex"] as const) {
       assert.deepEqual(await snapshots(stateDir(client)), state);
       f.config.port += 1;
       await assert.rejects(setupClient(client, f.config), /parameters changed/);
+      await previewWithoutChanges(f, client, "blocked", /parameters changed/);
       await restoreClient(client);
       assert.deepEqual(await readFile(f[client]), Buffer.from(original));
     },
@@ -581,7 +661,9 @@ for (const client of ["claude", "codex"] as const) {
         /changed since setup/,
       );
       assert.deepEqual(await snapshots(stateDir(client)), state);
+      await previewWithoutChanges(f, client, "blocked", /changed since setup/);
       await rm(f[client]);
+      await previewWithoutChanges(f, client, "blocked", /changed since setup/);
       await assert.rejects(restoreClient(client), /changed since setup/);
       await writeFile(f[client], installed);
       await restoreClient(client);
@@ -619,6 +701,12 @@ scenario(
     );
     await assert.rejects(
       setupClient("codex", f.config),
+      /generated agent config changed/,
+    );
+    await previewWithoutChanges(
+      f,
+      "codex",
+      "blocked",
       /generated agent config changed/,
     );
     await put(role, installed);
@@ -717,6 +805,187 @@ scenario("Non-UTF-8 configuration cannot produce a lossy backup", async (f) => {
   assert.deepEqual(await readFile(f.claude), original);
   await absent(stateDir("claude"));
 });
+for (const client of ["claude", "codex"] as const) {
+  scenario(
+    `${client} preview is read-only for fresh and managed installations`,
+    async (f) => {
+      const availableKeys: ReadonlySet<string> = new Set([
+        f.config.openai.apiKeyEnv,
+      ]);
+      await previewWithoutChanges(f, client, "ready", undefined, availableKeys);
+      await absent(paths().state);
+      await absent(dirname(f[client]));
+      assert.deepEqual(await setupClient(client, f.config, { availableKeys }), {
+        changed: true,
+      });
+      await chmod(paths().state, 0o755);
+      await previewWithoutChanges(
+        f,
+        client,
+        "managed",
+        undefined,
+        availableKeys,
+      );
+      assert.equal((await stat(paths().state)).mode & 0o777, 0o755);
+      assert.deepEqual(await setupClient(client, f.config, { availableKeys }), {
+        changed: false,
+      });
+    },
+  );
+
+  for (const kind of ["directory", "file", "dangling symlink"] as const) {
+    scenario(
+      `${client} preview safely blocks an existing ${kind} lock`,
+      async (f) => {
+        process.env.OPENAI_API_KEY = "test";
+        await mkdir(paths().state, { recursive: true, mode: 0o755 });
+        await chmod(paths().state, 0o755);
+        const lock = join(paths().state, `${client}-setup.lock`);
+        if (kind === "directory") await mkdir(lock);
+        else if (kind === "file") await writeFile(lock, "do not remove");
+        else await symlink(join(f.root, "missing-lock-target"), lock);
+        await previewWithoutChanges(f, client, "blocked", /lock|running/i);
+        await absent(f[client]);
+      },
+    );
+  }
+
+  for (const kind of ["state", "setup"] as const) {
+    scenario(
+      `${client} preview blocks a symlinked ${kind} directory without chmod`,
+      async (f) => {
+        process.env.OPENAI_API_KEY = "test";
+        const outside = join(f.root, "linked-directory");
+        await mkdir(outside, { mode: 0o755 });
+        await put(join(outside, "keep"), "untouched");
+        const link = kind === "state" ? paths().state : stateDir(client);
+        await mkdir(dirname(link), { recursive: true });
+        await symlink(outside, link);
+        await previewWithoutChanges(f, client, "blocked", /symlink|directory/i);
+        await absent(f[client]);
+      },
+    );
+  }
+}
+
+for (const source of ["availableKeys", "environment"] as const) {
+  scenario(
+    `Codex generated provider accepts only its configured key from ${source} without environment mutation`,
+    async (f) => {
+      f.config.openai.apiKeyEnv = "ARELAY_TEST_OPENAI_KEY";
+      const availableKeys: ReadonlySet<string> = new Set(
+        source === "availableKeys" ? [f.config.openai.apiKeyEnv] : [],
+      );
+      if (source === "environment")
+        process.env.ARELAY_TEST_OPENAI_KEY = "secret-not-saved";
+      const environment = { ...process.env };
+      await previewWithoutChanges(
+        f,
+        "codex",
+        "ready",
+        undefined,
+        availableKeys,
+      );
+      assert.deepEqual(
+        await setupClient("codex", f.config, { availableKeys }),
+        { changed: true },
+      );
+      assertEnvironmentUnchanged(environment);
+      assert.deepEqual(
+        [...availableKeys],
+        source === "availableKeys" ? [f.config.openai.apiKeyEnv] : [],
+      );
+      const provider = (
+        (await toml(f.codex)).model_providers as Record<string, Table>
+      ).arelay!;
+      assert.equal(Object.hasOwn(provider, "env_key"), false);
+      assert.equal(provider.requires_openai_auth, false);
+      for (const bytes of Object.values(await snapshots(f.root)))
+        assert.equal(bytes.includes("secret-not-saved"), false);
+    },
+  );
+}
+
+scenario(
+  "Codex generated provider never falls back to OPENAI_API_KEY for a different configured env",
+  async (f) => {
+    f.config.openai.apiKeyEnv = "ARELAY_TEST_OPENAI_KEY";
+    process.env.OPENAI_API_KEY = "wrong-key";
+    process.env.ARELAY_TEST_OPENAI_KEY = "  ";
+    const availableKeys: ReadonlySet<string> = new Set(["OPENAI_API_KEY"]);
+    const environment = { ...process.env };
+    await previewWithoutChanges(
+      f,
+      "codex",
+      "blocked",
+      /ARELAY_TEST_OPENAI_KEY/,
+      availableKeys,
+    );
+    await absent(paths().state);
+    await assert.rejects(
+      setupClient("codex", f.config, { availableKeys }),
+      /ARELAY_TEST_OPENAI_KEY/,
+    );
+    assertEnvironmentUnchanged(environment);
+    await absent(f.codex);
+    await absent(stateDir("codex"));
+  },
+);
+
+scenario(
+  "A failed final write with target drift preserves recovery data and later edits",
+  async (f) => {
+    const original = '{ "model": "main" }\n';
+    const drift = '{ "model": "concurrent edit" }\n';
+    await put(f.claude, original);
+    const rename = fs.rename;
+    const write = fs.writeFile;
+    let injected = false;
+    const spy = mock.method(
+      fs,
+      "rename",
+      async (...args: Parameters<typeof fs.rename>) => {
+        if (String(args[1]) === f.claude) {
+          injected = true;
+          await write(f.claude, drift);
+          throw Object.assign(new Error("injected final write failure"), {
+            code: "EIO",
+          });
+        }
+        return rename(...args);
+      },
+    );
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(
+        setupClient("claude", f.config),
+        /injected final write failure/,
+      );
+    } finally {
+      spy.mock.restore();
+      syncBuiltinESMExports();
+    }
+    assert.equal(injected, true);
+    assert.equal(await readFile(f.claude, "utf8"), drift);
+    assert.equal(
+      await readFile(join(stateDir("claude"), "original.backup"), "utf8"),
+      original,
+    );
+    assert.ok(
+      (await json(join(stateDir("claude"), "installation.json"))).installedHash,
+    );
+    await absent(join(paths().state, "claude-setup.lock"));
+    const before = await filesystemSnapshot(f.root);
+    await previewWithoutChanges(f, "claude", "blocked", /changed since setup/);
+    await assert.rejects(
+      setupClient("claude", f.config),
+      /changed since setup/,
+    );
+    await assert.rejects(restoreClient("claude"), /changed since setup/);
+    assert.deepEqual(await filesystemSnapshot(f.root), before);
+  },
+);
+
 scenario("Client installations and restores are independent", async (f) => {
   process.env.OPENAI_API_KEY = "test";
   await setupClient("claude", f.config);
