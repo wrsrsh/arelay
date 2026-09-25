@@ -19,7 +19,7 @@ export async function startNativeMcp(client: NativeClient): Promise<void> {
   server.registerTool(
     "delegate",
     {
-      description: `Delegate a self-contained task to the native ${target} CLI. Uses that CLI's own subscription login; no API key or token proxy. Pass the task context and the current workspace directory. Read-only by default.`,
+      description: `Delegate a self-contained task to the native ${target} CLI. Uses that CLI's existing authentication; Codex keeps its configured provider, including Azure. No subscription tokens are copied or proxied. Pass the task context and the current workspace directory. Read-only by default.`,
       inputSchema: {
         task: z.string().min(1).max(200000),
         cwd: z.string().optional(),

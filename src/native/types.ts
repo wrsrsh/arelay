@@ -2,6 +2,7 @@ export type NativeClient = "claude" | "codex";
 export interface NativeWorkerConfig {
   command: string;
   model?: string;
+  configDir?: string;
 }
 export interface NativeConfig {
   enabled: boolean;
@@ -15,6 +16,8 @@ export interface NativeAuth {
   installed: boolean;
   loggedIn: boolean;
   subscription: boolean;
+  ready?: boolean;
+  authKind?: "subscription" | "api-key" | "configured-provider";
   command?: string;
   message: string;
 }

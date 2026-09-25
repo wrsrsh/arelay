@@ -15,15 +15,19 @@ change main-model providers, translate subscription requests, or copy login toke
 The parent must call arelay's tool and supply a self-contained task and workspace
 path. Native workers do not receive the parent's transcript automatically.
 
-Sign in using `codex login` or `claude auth login` in the original CLI. arelay only
-checks the CLI's reported login status. It does not offer its own Claude.ai OAuth
-flow or read credential/token files. Native CLI usage remains subject to the
-provider's terms and subscription quotas. This is an end-user CLI delegation
-workflow, not a subscription-backed API service.
+Keep an already-working Codex provider configuration. Codex workers support both
+its normal login and configured providers such as Azure; they do not force the
+OpenAI provider or require a ChatGPT login for Azure. The original CLI still owns
+its authentication and HTTP requests. For subscription sign-in, use `codex login`
+or `claude auth login`. Claude native workers use its first-party subscription
+login. arelay does not offer its own Claude.ai OAuth flow or read OAuth token
+stores. Provider terms, quotas, and configured API charges still apply.
 
-The selected worker binaries must be installed. You can register connections
-before signing in, but delegation will refuse to run until the target CLI reports
-a subscription login. API credentials are not silently substituted.
+The binaries must be installed. The readiness check distinguishes a subscription
+login from a configured provider with available credential variables. It does
+not claim to validate API keys without a real request. A missing declared
+credential is reported by name rather than asking an Azure user to log into
+ChatGPT.
 
 ### Permissions and isolation
 
@@ -35,12 +39,18 @@ permission requests that would require interactive approval. Permission bypass
 flags are never enabled. These workers are not an unrestricted copy of every
 interactive CLI capability.
 
-The worker process does not inherit API keys, OAuth token environment overrides,
-or unrelated secrets from the daemon. The CLI itself reads its own login. User API
-provider settings are not inherited: Codex uses the OpenAI/ChatGPT provider and
-Claude uses the first-party endpoint. Nested arelay MCP delegation is disabled.
-This intentionally avoids billing an accidentally inherited Azure/API key and
-prevents recursive workers. Project context should be included explicitly.
+The base worker environment excludes unrelated secrets and OAuth token overrides.
+For Codex, only environment variables declared by the selected provider's
+`env_key` and `env_http_headers` are resolved and forwarded. Resolution uses the
+service environment, arelay's `credentials.env`, or a matching macOS Keychain
+item. An explicitly exported first-party `OPENAI_API_KEY` is also preserved; a
+spare stored key is not discovered as a fallback to a subscription login.
+
+Codex keeps its normal model/provider/catalog configuration. Configured MCP
+extensions are disabled for the worker invocation without editing user settings,
+preventing recursive arelay calls and unrelated tool access. Claude remains on
+the first-party endpoint with its own login and restricted native tools. Supply
+project/task context explicitly.
 
 Each task has a timeout, a 4MB captured-output limit, and a concurrency cap. Worker
 process groups are terminated on cancellation/timeout. The daemon returns final
@@ -53,7 +63,9 @@ untrusted programs running under the same account.
 Native settings live in the existing config's `native` block. Setup records
 absolute CLI paths, optional model overrides, `allowWrites` (false by default),
 `timeoutMs` (600000), and `maxConcurrent` (3). Reconnect after moving/removing CLI
-executables. Run `arelay doctor` to check login status.
+executables. An explicit `CODEX_HOME` or `CLAUDE_CONFIG_DIR` is saved as the worker's
+`configDir` so the service can use that same CLI configuration. Run `arelay doctor`
+to check login/provider readiness.
 
 ### Connections and migration
 
@@ -66,6 +78,12 @@ If arelay previously installed API routing, run `arelay unsetup claude` and/or
 `arelay unsetup codex` before connecting those clients in native mode. Existing
 unowned MCP entries are never overwritten. Other bridges are not removed;
 any built-in-agent routing they installed remains separate from arelay's tool.
+
+Codex may request approval before calling the MCP tool. Interactive use should
+approve that specific call normally. Headless `codex exec` with approval policy
+`never` will refuse unapproved MCP calls. For trusted automation, a per-session
+`-c 'mcp_servers.arelay.tools.delegate.approval_mode="approve"'` approves only this
+tool; it does not disable the parent's sandbox or the worker's read-only gate.
 
 ## Advanced API setup
 
@@ -98,7 +116,7 @@ Installer options:
 | Variable                | Purpose                                                      |
 | ----------------------- | ------------------------------------------------------------ |
 | `ARELAY_PREFIX`         | Installation prefix; defaults to `~/.local`                  |
-| `ARELAY_VERSION=v0.3.0` | Pin a release instead of downloading the latest              |
+| `ARELAY_VERSION=v0.3.1` | Pin a release instead of downloading the latest              |
 | `ARELAY_NO_SERVICE=1`   | Install the binary only; skip setup and service installation |
 | `ARELAY_NO_TUI=1`       | Install/start the service without opening the wizard         |
 
@@ -294,9 +312,12 @@ delegated conversation, system instructions, and tool definitions.
 
 Tests cover fake native CLIs, auth-state parsing, process cancellation, read-only
 permissions, real MCP client/server communication, configuration preservation,
-and the separate API routing implementation. Claude Code 2.1.281 and Codex 0.156.1
-are the tested native command interfaces. A read-only Claude worker was also
-verified manually with an existing Max login; CI never uses real credentials.
+and the separate API routing implementation. Claude Code 2.1.282 and Codex 0.156.1
+are the tested native command interfaces. Live read-only tests have verified both
+real parent-client directions with Azure-backed Codex and Claude Max. Opposite
+worker processes, MCP tool results, random file challenges, and counter deltas
+were checked rather than trusting a model's self-identification. CI never uses
+real credentials.
 The CI matrix covers macOS/Linux and Node 22/24. PTY tests exercise keyboard input,
 API-key masking, cancellation, cursor restoration, `NO_COLOR`, and piped install.
 

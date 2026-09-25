@@ -12,6 +12,8 @@ import type {
   NativeTask,
 } from "./types.js";
 
+import { codexProvider, codexProviderEnvironment } from "./codex-provider.js";
+
 const exec = promisify(execFile);
 const LIMIT = 4 * 1024 * 1024;
 
@@ -85,6 +87,7 @@ export async function nativeAuth(
   client: NativeClient,
   configured?: string,
   signal?: AbortSignal,
+  configDir?: string,
 ): Promise<NativeAuth> {
   const command = configured || (await findNativeCli(client));
   if (!command)
@@ -94,12 +97,43 @@ export async function nativeAuth(
       subscription: false,
       message: `Install the ${client} CLI first.`,
     };
+  const env = workerEnvironment(command);
+  if (configDir)
+    env[client === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"] = configDir;
+  if (client === "codex") {
+    try {
+      const provider = await codexProvider(configDir);
+      Object.assign(env, await codexProviderEnvironment(provider, configDir));
+      if (provider.configured && !provider.requiresLogin)
+        return {
+          installed: true,
+          command,
+          loggedIn: false,
+          subscription: false,
+          ready: true,
+          authKind: "configured-provider",
+          message: `${provider.name} configured (provider/API usage)`,
+        };
+    } catch (error) {
+      return {
+        installed: true,
+        command,
+        loggedIn: false,
+        subscription: false,
+        ready: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Codex provider configuration is unavailable",
+      };
+    }
+  }
   try {
     const { stdout, stderr } = await exec(
       command,
       client === "codex" ? ["login", "status"] : ["auth", "status", "--json"],
       {
-        env: workerEnvironment(command),
+        env,
         timeout: 10000,
         maxBuffer: 256 * 1024,
         signal,
@@ -128,10 +162,20 @@ export async function nativeAuth(
       command,
       loggedIn,
       subscription,
+      ready: client === "codex" ? loggedIn : subscription,
+      ...(loggedIn
+        ? {
+            authKind: subscription
+              ? ("subscription" as const)
+              : ("api-key" as const),
+          }
+        : {}),
       message: subscription
         ? "CLI login ready"
         : loggedIn
-          ? "API authentication detected; native mode requires the CLI subscription login"
+          ? client === "codex"
+            ? "Codex API login ready (API usage)"
+            : "Claude native workers require the CLI subscription login; API model routing remains available separately"
           : `Run ${client === "claude" ? "claude auth login" : "codex login"} in your terminal.`,
     };
   } catch {
@@ -180,17 +224,12 @@ export function buildWorkerInvocation(
           "--json",
           "--ephemeral",
           "--skip-git-repo-check",
-          "--ignore-user-config",
           "-C",
           task.cwd,
           "-s",
           write ? "workspace-write" : "read-only",
           "-c",
           'approval_policy="never"',
-          "-c",
-          'model_provider="openai"',
-          "-c",
-          'forced_login_method="chatgpt"',
           ...(model ? ["--model", model] : []),
           "-",
         ]
@@ -222,7 +261,12 @@ export function buildWorkerInvocation(
           }),
           ...(model ? ["--model", model] : []),
         ];
-  return { command, args, env: workerEnvironment(command) };
+  const env = workerEnvironment(command);
+  const configDir = config[task.target]?.configDir;
+  if (configDir)
+    env[task.target === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR"] =
+      configDir;
+  return { command, args, env };
 }
 
 export function parseWorkerOutput(target: NativeClient, text: string): string {
@@ -363,10 +407,29 @@ export async function runNativeTask(
     task.target,
     config[task.target]?.command,
     signal,
+    config[task.target]?.configDir,
   );
   signal?.throwIfAborted();
-  if (!auth.subscription || !auth.command) throw new Error(auth.message);
+  if (!(auth.ready ?? auth.subscription) || !auth.command)
+    throw new Error(auth.message);
   const invocation = buildWorkerInvocation(task, config, auth.command);
+  if (task.target === "codex") {
+    const provider = await codexProvider(config.codex?.configDir);
+    Object.assign(
+      invocation.env,
+      await codexProviderEnvironment(provider, config.codex?.configDir),
+    );
+    // Keep model/provider configuration, but isolate worker tools from user MCP
+    // extensions and arelay itself. These are per-invocation overrides only.
+    invocation.args.splice(
+      -1,
+      0,
+      ...provider.mcpServers.flatMap((name) => [
+        "-c",
+        `mcp_servers.${name}.enabled=false`,
+      ]),
+    );
+  }
   const started = Date.now();
   const stdout = await collect(
     invocation.command,
