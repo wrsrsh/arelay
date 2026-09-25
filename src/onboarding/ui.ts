@@ -1,6 +1,6 @@
 import * as prompts from "@clack/prompts";
 import type { Readable, Writable } from "node:stream";
-import { banner, palette, routePreview, terminalText } from "./theme.js";
+import { palette, routePreview, terminalText } from "./theme.js";
 import { WizardCancelled, type WizardUI } from "./types.js";
 
 export function interactiveTerminal(
@@ -48,11 +48,7 @@ export function createTerminalUI(
   };
   return {
     intro() {
-      output.write(banner(output.columns ?? 80, color));
-      prompts.intro(
-        c.cyan("setup / arrow keys to move · enter to select · esc to cancel"),
-        common,
-      );
+      prompts.intro(c.cyan("arelay"), common);
     },
     async select(question) {
       return unwrap(

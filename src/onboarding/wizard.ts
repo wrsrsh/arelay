@@ -94,8 +94,8 @@ async function chooseBackend(
       ? [
           {
             value: "azure",
-            label: "Azure AI Foundry",
-            hint: "your Responses deployment",
+            label: "Azure AI Foundry (advanced)",
+            hint: "enter your endpoint and deployment ID",
           },
         ]
       : []),
@@ -109,8 +109,14 @@ async function chooseBackend(
   ];
   const selected = await ui.select({
     message: `02 / provider · ${label}`,
-    options: choices,
-    initialValue: "keep",
+    options: [
+      ...choices.filter((choice) => choice.value === "official"),
+      ...choices.filter(
+        (choice) => choice.value !== "official" && choice.value !== "azure",
+      ),
+      ...choices.filter((choice) => choice.value === "azure"),
+    ],
+    initialValue: "official",
   });
   let backend = structuredClone(current);
   if (selected === "detected" && detected) backend = structuredClone(detected);
@@ -121,7 +127,12 @@ async function chooseBackend(
     backend = {
       ...backend,
       baseUrl,
-      apiKeyEnv: isOpenAI ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY",
+      apiKeyEnv:
+        baseUrl === current.baseUrl
+          ? current.apiKeyEnv
+          : isOpenAI
+            ? "OPENAI_API_KEY"
+            : "ANTHROPIC_API_KEY",
       authHeader: isOpenAI ? "authorization" : "x-api-key",
     };
   }
@@ -211,6 +222,7 @@ export async function runWizard(
   const environment = options.environment ?? process.env;
   const initial = await services.load();
   let draft = structuredClone(initial.config);
+  draft.mode = "api";
   const secrets: Record<string, string> = {};
   let selection = "both";
   ui.intro();

@@ -2,38 +2,90 @@
 
 For installation and the interactive setup, start with the [README](../README.md).
 
-## Terminal setup
+## Native CLI setup (default)
 
-`arelay setup` opens the wizard. Running `arelay` without arguments does the same
-in a terminal, or prints help when output/input is redirected.
+`arelay setup` has two normal choices: select the clients, then connect. Running
+`arelay` without arguments does the same in a terminal, or prints help when input
+or output is redirected. Model overrides and workspace edits are optional actions
+on the confirmation screen. API configuration is an explicit advanced option.
 
-The wizard loads your current config without changing it. It lets you choose:
+Native mode registers a stdio MCP server named `arelay`. Each selected client gets
+a `delegate` tool targeting the other CLI. It does not intercept built-in agents,
+change main-model providers, translate subscription requests, or copy login tokens.
+The parent must call arelay's tool and supply a self-contained task and workspace
+path. Native workers do not receive the parent's transcript automatically.
 
-1. Clients to configure: both directions, Claude Code, Codex, or backends only.
-2. OpenAI, Azure AI Foundry, Anthropic, or a compatible custom API endpoint.
-3. Suggested model IDs or a model/deployment ID you enter yourself.
-4. Existing credentials, masked new keys, or setup later.
-5. Whether to install/restart the login service.
-6. Save and activate, save backends only, edit selections, or cancel.
+Sign in using `codex login` or `claude auth login` in the original CLI. arelay only
+checks the CLI's reported login status. It does not offer its own Claude.ai OAuth
+flow or read credential/token files. Native CLI usage remains subject to the
+provider's terms and subscription quotas. This is an end-user CLI delegation
+workflow, not a subscription-backed API service.
 
-No configuration or credential files are written until the final confirmation.
-The wizard checks client conflicts before enabling activation. Missing keys or
-an existing incompatible bridge leave “save backends only” available. Model
-suggestions are not an availability check; setup makes no provider API requests.
+The selected worker binaries must be installed. You can register connections
+before signing in, but delegation will refuse to run until the target CLI reports
+a subscription login. API credentials are not silently substituted.
 
-Unselected clients are not restored or disabled. Saving backends can affect any
-clients that already point at arelay. Declining service startup leaves an existing
-service running with its loaded settings until you restart it.
+### Permissions and isolation
 
-A key found only in the shell environment is not available to a login service.
-The wizard offers to save it privately, but only after you select that option and
-confirm. The input and routing preview never display the key.
+Workers are read-only by default. To allow edits, explicitly enable workspace edits
+in setup; the parent must also request `permission: "workspace-write"` on that call.
+Codex uses its read-only/workspace-write sandbox with approval requests denied.
+Claude uses plan/acceptEdits mode, a restricted set of file tools, and denies
+permission requests that would require interactive approval. Permission bypass
+flags are never enabled. These workers are not an unrestricted copy of every
+interactive CLI capability.
+
+The worker process does not inherit API keys, OAuth token environment overrides,
+or unrelated secrets from the daemon. The CLI itself reads its own login. User API
+provider settings are not inherited: Codex uses the OpenAI/ChatGPT provider and
+Claude uses the first-party endpoint. Nested arelay MCP delegation is disabled.
+This intentionally avoids billing an accidentally inherited Azure/API key and
+prevents recursive workers. Project context should be included explicitly.
+
+Each task has a timeout, a 4MB captured-output limit, and a concurrency cap. Worker
+process groups are terminated on cancellation/timeout. The daemon returns final
+text rather than complete internal transcripts. Native worker requests require a
+random local service key in `native-token` (owner-only permissions). The MCP tool
+and `arelay delegate` read this file; it is unrelated to provider credentials.
+Processes running as your user can read it, so this is not a sandbox against
+untrusted programs running under the same account.
+
+Native settings live in the existing config's `native` block. Setup records
+absolute CLI paths, optional model overrides, `allowWrites` (false by default),
+`timeoutMs` (600000), and `maxConcurrent` (3). Reconnect after moving/removing CLI
+executables. Run `arelay doctor` to check login status.
+
+### Connections and migration
+
+Claude's MCP entry is in `~/.claude.json` or `$CLAUDE_CONFIG_DIR/.claude.json`.
+Codex's entry is in `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`).
+Only arelay's owned MCP entry is removed by native disconnect; unrelated edits
+are preserved. No complete account/config snapshot is stored in native metadata.
+
+If arelay previously installed API routing, run `arelay unsetup claude` and/or
+`arelay unsetup codex` before connecting those clients in native mode. Existing
+unowned MCP entries are never overwritten. Other bridges are not removed;
+any built-in-agent routing they installed remains separate from arelay's tool.
+
+## Advanced API setup
+
+`arelay setup --api` retains the API-backed model-swapping integration. Standard
+OpenAI/Anthropic APIs are listed first. Azure is an advanced choice that asks for
+your versioned endpoint and deployment name. Existing personal endpoints do not
+choose the default integration mode.
+
+This setup can save keys privately, configure clients, or save backends only. It
+preflights changes and asks before writing. Missing API keys or an incompatible
+bridge prevent activation but still allow saving the draft. A key present only
+in your shell is not available to a login service unless you explicitly save it.
+Unselected clients are not disabled; existing routes can be affected by changed
+backend settings. Suggested models are not checked against your account.
 
 ### Unattended installation
 
 Use `arelay install --no-interactive` or `ARELAY_NO_TUI=1` to skip prompts. CI,
 redirected input/output, and `TERM=dumb` are noninteractive. Explicit
-`arelay setup claude|codex|both` commands keep their noninteractive behavior.
+`arelay setup claude|codex|both` commands keep their legacy noninteractive API-mode behavior; use bare `arelay setup` for native CLI connections.
 `NO_COLOR=1` removes colors without disabling keyboard navigation.
 
 The curl installer reopens `/dev/tty` only when output is a terminal and CI and
@@ -46,14 +98,14 @@ Installer options:
 | Variable                | Purpose                                                      |
 | ----------------------- | ------------------------------------------------------------ |
 | `ARELAY_PREFIX`         | Installation prefix; defaults to `~/.local`                  |
-| `ARELAY_VERSION=v0.2.1` | Pin a release instead of downloading the latest              |
+| `ARELAY_VERSION=v0.3.0` | Pin a release instead of downloading the latest              |
 | `ARELAY_NO_SERVICE=1`   | Install the binary only; skip setup and service installation |
 | `ARELAY_NO_TUI=1`       | Install/start the service without opening the wizard         |
 
 Homebrew installs the CLI and Node. `arelay install` is the second part of the
 Homebrew installation command. Do not also use `brew services` for arelay.
 
-## Configuration
+## API configuration
 
 Files live under `~/.config/arelay/`; `ARELAY_HOME` overrides that directory.
 `arelay init` creates a default config without starting a service or editing clients.
@@ -61,6 +113,7 @@ Files live under `~/.config/arelay/`; `ARELAY_HOME` overrides that directory.
 ```json
 {
   "version": 1,
+  "mode": "api",
   "port": 8788,
   "openai": {
     "baseUrl": "https://api.openai.com/v1",
@@ -128,7 +181,7 @@ credentials file, or Keychain. For Codex, this URL must match the current provid
 upstream `base_url` before setup. The wizard can suggest a compatible backend
 from your existing Codex config; it does not copy arbitrary custom headers.
 
-## Client integration
+## API-mode client integration
 
 ### Claude Code
 
@@ -207,7 +260,7 @@ arelay serve                 # foreground; stop the service first
   `arelay status` checks the listener; `arelay doctor` checks local prerequisites,
   not provider account access.
 
-## Protocol limits
+## API protocol limits
 
 Text, images, full conversation history, function tools/results, Responses tool
 namespaces, and Codex free-form tools such as `apply_patch` are supported.
@@ -239,9 +292,17 @@ beta headers are not sent to the other provider. Backends require HTTPS except
 loopback test servers. Redirects are not followed. The destination receives the
 delegated conversation, system instructions, and tool definitions.
 
-Native subagent creation is tested with Claude Code 2.1.281 and Codex 0.156.1
-against local mock backends. These tests check routing, not paid-provider access.
-The CI matrix covers macOS/Linux and Node 22/24. PTY tests exercise masked input,
-arrow keys, cancellation, cursor restoration, `NO_COLOR`, and piped installation.
+Tests cover fake native CLIs, auth-state parsing, process cancellation, read-only
+permissions, real MCP client/server communication, configuration preservation,
+and the separate API routing implementation. Claude Code 2.1.281 and Codex 0.156.1
+are the tested native command interfaces. A read-only Claude worker was also
+verified manually with an existing Max login; CI never uses real credentials.
+The CI matrix covers macOS/Linux and Node 22/24. PTY tests exercise keyboard input,
+API-key masking, cancellation, cursor restoration, `NO_COLOR`, and piped install.
+
+`arelay stats` counts native task attempts separately from API requests. Counters
+reset when the daemon restarts. Status/stats polling does not increment active
+work. All-zero counters mean no delegation/API work has reached this daemon; for
+native mode, restart connected clients and explicitly ask them to use `delegate`.
 
 See [SECURITY.md](../SECURITY.md) for reporting vulnerabilities.

@@ -1,19 +1,18 @@
 # arelay
 
-use codex models for claude code's subagents, or claude for codex's.
+use codex from claude code, or claude code from codex.
 
-arelay runs locally. your main model stays in its client, and that client still
-runs the tools and handles permissions. you choose where the delegated work goes.
+arelay adds a `delegate` tool to each client. it runs the other installed CLI as
+a worker, using that CLI's own login and tools. subscriptions are the default;
+API keys and azure are optional.
 
 ## install
-
-with homebrew:
 
 ```sh
 brew install wrsrsh/tap/arelay && arelay install
 ```
 
-or with curl, if you already have node 22+:
+or, with node 22+ installed:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/wrsrsh/arelay/main/install.sh | sh
@@ -23,88 +22,93 @@ works on macos and linux. the curl install goes into `~/.local/bin`.
 
 ## setup
 
-the installer opens a terminal setup wizard. you can run it again whenever you want:
+sign in using the original CLIs:
+
+```sh
+codex login
+claude auth login
+```
+
+then run:
 
 ```sh
 arelay setup
 ```
 
-pick a direction, provider and model. use the suggested model versions or enter
-your own model or azure deployment name.
+choose a direction, then connect. it uses each CLI's default model, leaves your model providers alone, and starts arelay at login.
+model overrides and workspace edits are optional. workers are read-only by default.
 
 ```text
-◆  which clients do you want to configure?
-│  ● both directions
-│  ○ claude code → openai subagents
-│  ○ codex → claude subagents
-│  ○ backends only
+arelay
+
+  ● both directions
+  ○ claude → codex
+  ○ codex → claude
+  ○ advanced: API keys / azure
 ```
 
-the wizard finds existing settings, masks API keys, and shows the routing before
-you confirm. it can start the background service and keep it running at login.
-press escape or ctrl+c before saving to leave your configuration alone.
+restart the clients you connected, then ask one to use arelay's `delegate` tool.
+for example: “use arelay to have codex review this module.” give the worker the
+task context and workspace directory; it doesn't inherit the parent's transcript.
 
-you'll need API keys for the providers you route to. claude and chatgpt
-subscriptions aren't used for cross-provider requests. keys you save stay in
-`~/.config/arelay/credentials.env` with owner-only permissions; macos keychain is
-also supported. the wizard doesn't test your keys or model access.
-
-if another bridge already manages a client, arelay asks you to restore that setup
-first. choosing “backends only” leaves client settings as they are; it doesn't
-disable routes you've already enabled.
+this is explicit delegation, not a silent replacement for every built-in
+subagent. the worker has its own tools and permissions. arelay doesn't copy
+subscription tokens or use them as API keys; sign-in stays in the unmodified CLI.
 
 ## using it
 
 ```sh
-arelay status             # is the service running?
-arelay stats              # which direction are requests taking?
-arelay doctor             # config, credentials and client versions
-arelay service restart
+arelay status
+arelay stats
+arelay doctor
+arelay delegate claude "review this directory without changing files"
 ```
 
-to undo the client changes:
+stats count work since the service started. polling stats doesn't count as work.
+use `--json` with `status` or `stats` if you want the raw data.
+
+to remove a connection:
 
 ```sh
 arelay unsetup claude
 arelay unsetup codex
 ```
 
-restart the affected clients afterward. restore their settings before stopping
-or removing arelay, otherwise they'll keep sending requests to a stopped service.
+restart the affected clients afterward. stopping arelay makes its delegate tool
+unavailable. API-mode clients also need their proxy settings restored before you
+stop the service.
 
-for scripts or CI, skip the wizard:
+## API keys and azure
 
 ```sh
-arelay install --no-interactive
-arelay setup claude       # configure one client using saved settings
-arelay setup codex
+arelay setup --api
 ```
 
-redirected installs are noninteractive too. `ARELAY_NO_TUI=1` disables the wizard;
-`NO_COLOR=1` turns off colors.
+API mode swaps subagent models while keeping the parent's tool loop. it requires
+provider API keys. azure is under advanced settings and asks for your OpenAI v1
+endpoint and deployment ID; nothing is hardcoded to a particular deployment.
 
-## a few limits
+API mode changes codex to direct function tools/v1 agents and disables hosted web
+search. it also disables claude's deferred tool search. hosted tools,
+cross-provider compaction and reasoning replay aren't supported in that mode.
 
-- codex routing uses direct function tools and v1 agents. hosted web search is
-  disabled for that session, including its main model.
-- claude's deferred tool search is disabled so the full tool definitions can be
-  translated.
-- hosted tools, cross-provider compaction and reasoning replay aren't supported.
-- the listener is local, but other processes on your machine can use it and spend
-  the configured API keys. don't expose the port through a tunnel.
+## other details
 
-[the reference](docs/reference.md) covers configuration, azure, service behavior,
-compatibility and recovery. tested client versions are listed there too.
+`arelay install --no-interactive` starts the service without setup prompts.
+`NO_COLOR=1` disables colors. configuration lives in `~/.config/arelay/`.
 
-## development
+native workers require an automatically generated local service key. other
+processes running as your user can still use it. don't expose the listener through
+a tunnel. subscription quotas and the original CLIs' permissions still apply.
+
+[the reference](docs/reference.md) covers permissions, login isolation, API
+configuration, service behavior and recovery.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm check
-pnpm smoke:clients
 ```
 
-the tests use temporary settings and mock backends, not paid API calls. terminal
-tests also need python 3.9+. see [contributing](CONTRIBUTING.md) for release steps.
+terminal tests need python 3.9+. see [contributing](CONTRIBUTING.md).
 
 MIT, with third-party notices [here](THIRD_PARTY_NOTICES.md).

@@ -8,7 +8,7 @@ const files = {
   "arelay.mjs": "dist/arelay.mjs",
   LICENSE: "LICENSE",
   "README.md": "README.md",
-  "THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+  "THIRD_PARTY_NOTICES.md": "dist/THIRD_PARTY_NOTICES.md",
   "LICENSE.openai-codex": "vendor/LICENSE.openai-codex",
 };
 try {
