@@ -15,6 +15,9 @@ import {
 
 import { routeCodexResponse, routeCodexStream } from "./protocol/subagents.js";
 import { VERSION } from "./version.js";
+import { runNativeTask } from "./native/worker.js";
+import type { NativeTask } from "./native/types.js";
+import { nativeAuthorized } from "./native/access.js";
 
 const HOP = new Set([
   "host",
@@ -92,6 +95,8 @@ function endpoint(backend: BackendConfig, path: string): string {
 export function createRelay(
   config: Config,
   onError?: (error: unknown) => void,
+  nativeRunner: typeof runNativeTask = runNativeTask,
+  nativeToken?: string,
 ): http.Server {
   const stats = {
     startedAt: new Date().toISOString(),
@@ -99,18 +104,29 @@ export function createRelay(
     codexToClaude: 0,
     anthropicPassthrough: 0,
     openaiPassthrough: 0,
+    nativeCodex: 0,
+    nativeClaude: 0,
     errors: 0,
     active: 0,
   };
+  let nativeActive = 0;
+  const controllers = new Set<AbortController>();
   const server = http.createServer((req, res) => {
+    let counted = false;
     const controller = new AbortController();
+    controllers.add(controller);
     const timeout = setTimeout(
       () => controller.abort(new Error("Request timeout")),
-      config.requestTimeoutMs,
+      req.url === "/native/delegate"
+        ? (config.native?.timeoutMs ?? 600000) + 10000
+        : config.requestTimeoutMs,
     );
     timeout.unref();
     res.on("close", () => controller.abort());
-    stats.active++;
+    const countWork = () => {
+      counted = true;
+      stats.active++;
+    };
     const run = async () => {
       const port = req.socket.localPort;
       if (
@@ -134,6 +150,61 @@ export function createRelay(
       if (req.method !== "POST")
         throw new HttpError(405, "Use POST for model requests");
       const url = new URL(req.url || "/", "http://localhost");
+      if (url.pathname === "/native/delegate") {
+        if (!nativeAuthorized(req.headers.authorization, nativeToken))
+          throw new HttpError(
+            401,
+            "Native worker access requires the local service key",
+          );
+        if (!config.native?.enabled)
+          throw new HttpError(
+            503,
+            "Native delegation is not connected. Run arelay setup.",
+          );
+        if (nativeActive >= config.native.maxConcurrent)
+          throw new HttpError(
+            429,
+            "All native workers are busy; retry shortly",
+          );
+        if (!req.headers["content-type"]?.startsWith("application/json"))
+          throw new HttpError(415, "Use application/json");
+        let task: NativeTask;
+        try {
+          task = JSON.parse((await readBody(req, 256 * 1024)).toString("utf8"));
+        } catch {
+          throw new HttpError(400, "Invalid native task JSON");
+        }
+        if (
+          !task ||
+          !["claude", "codex"].includes(task.target) ||
+          typeof task.task !== "string" ||
+          typeof task.cwd !== "string" ||
+          (task.model !== undefined && typeof task.model !== "string")
+        )
+          throw new HttpError(400, "Supply target, task, and an absolute cwd");
+        if (nativeActive >= config.native.maxConcurrent)
+          throw new HttpError(
+            429,
+            "All native workers are busy; retry shortly",
+          );
+        countWork();
+        nativeActive++;
+        stats[task.target === "codex" ? "nativeCodex" : "nativeClaude"]++;
+        try {
+          return json(
+            res,
+            200,
+            await nativeRunner(task, config.native, controller.signal),
+          );
+        } catch (error) {
+          throw new HttpError(
+            controller.signal.aborted ? 504 : 502,
+            error instanceof Error ? error.message : "Native worker failed",
+          );
+        } finally {
+          nativeActive--;
+        }
+      }
       if (
         ![
           "/v1/messages",
@@ -174,6 +245,7 @@ export function createRelay(
           400,
           "Request must be an object with a model string",
         );
+      countWork();
       const anthropic = url.pathname.startsWith("/v1/messages");
       const translate = anthropic
         ? body.model === config.routes.claudeSubagentModel
@@ -392,8 +464,13 @@ export function createRelay(
       })
       .finally(() => {
         clearTimeout(timeout);
-        stats.active--;
+        if (counted) stats.active--;
+        controllers.delete(controller);
       });
+  });
+  server.on("arelay:shutdown", () => {
+    for (const controller of controllers)
+      controller.abort(new Error("Service is stopping"));
   });
   server.requestTimeout = config.requestTimeoutMs;
   server.headersTimeout = Math.min(config.requestTimeoutMs, 60_000);

@@ -1,2 +1,2 @@
 // Shared by CLI output, the setup screen, and the health endpoint.
-export const VERSION = "0.2.1";
+export const VERSION = "0.3.0";

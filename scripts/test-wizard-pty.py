@@ -62,7 +62,7 @@ def send(value):
 
 
 try:
-    wait_for("01 / routing")
+    wait_for("01 / routing" if "--api" in command else "Use native CLI workers")
     if mode == "secret":
         send(b"\r")
         wait_for("02 / provider")
@@ -97,8 +97,8 @@ try:
         read_chunk()
     text = output.decode(errors="replace")
     assert os.waitstatus_to_exitcode(status) == 0, "wizard exited unsuccessfully"
-    assert "Setup cancelled" in text, "cancellation was not acknowledged"
-    assert "route your subagents" in text, "branding was not rendered"
+    assert "cancelled" in text.lower(), "cancellation was not acknowledged"
+    assert "arelay" in text, "application name was not rendered"
     assert secret not in text, "plaintext secret appeared in terminal output"
     assert "\x1b[?25h" in text, "terminal cursor was not restored"
     if "NO_COLOR" in os.environ:

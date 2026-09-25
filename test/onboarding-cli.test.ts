@@ -98,6 +98,7 @@ for (const mode of ["escape", "ctrl-c", "no-color", "secret"])
           "tsx",
           cli,
           "setup",
+          ...(mode === "secret" ? ["--api"] : []),
         ],
         { env, timeout: 45000, maxBuffer: 100000 },
       );

@@ -4,6 +4,8 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { Config, Paths } from "./types.js";
+import { isAbsolute } from "node:path";
+import { defaultNativeConfig } from "./native/types.js";
 
 export function paths(): Paths {
   const dir = resolve(
@@ -20,6 +22,8 @@ export function paths(): Paths {
 
 export const defaultConfig: Config = {
   version: 1,
+  mode: "native",
+  native: structuredClone(defaultNativeConfig),
   port: 8788,
   openai: {
     baseUrl: "https://api.openai.com/v1",
@@ -46,6 +50,44 @@ export function validateConfig(value: unknown): Config {
     throw new Error("Configuration must be an object");
   const c = value as Config;
   if (c.version !== 1) throw new Error("Unsupported configuration version");
+  if (c.mode !== undefined && !["native", "api"].includes(c.mode))
+    throw new Error("mode must be native or api");
+  if (c.native !== undefined) {
+    const n = c.native;
+    if (
+      !n ||
+      typeof n.enabled !== "boolean" ||
+      typeof n.allowWrites !== "boolean"
+    )
+      throw new Error("Invalid native worker configuration");
+    if (
+      !Number.isSafeInteger(n.timeoutMs) ||
+      n.timeoutMs < 1000 ||
+      n.timeoutMs > 3600000
+    )
+      throw new Error("Native timeout must be between 1 second and 1 hour");
+    if (
+      !Number.isInteger(n.maxConcurrent) ||
+      n.maxConcurrent < 1 ||
+      n.maxConcurrent > 16
+    )
+      throw new Error("Native concurrency must be 1–16");
+    for (const worker of [n.codex, n.claude])
+      if (worker) {
+        if (
+          typeof worker.command !== "string" ||
+          !isAbsolute(worker.command) ||
+          /[\x00-\x1f]/.test(worker.command)
+        )
+          throw new Error("Native CLI paths must be absolute");
+        if (
+          worker.model !== undefined &&
+          (typeof worker.model !== "string" ||
+            !/^[\w][\w.:/-]{0,199}$/.test(worker.model))
+        )
+          throw new Error("Invalid native model override");
+      }
+  }
   if (!Number.isInteger(c.port) || c.port < 1 || c.port > 65535)
     throw new Error("port must be 1–65535");
   for (const name of ["openai", "anthropic"] as const) {

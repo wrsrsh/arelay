@@ -1,3 +1,5 @@
+import type { NativeConfig } from "./native/types.js";
+
 // API payloads are open-ended wire objects. Validate supported variants at the boundary.
 export type JsonObject = Record<string, any>;
 
@@ -10,6 +12,8 @@ export interface BackendConfig {
 
 export interface Config {
   version: 1;
+  mode?: "native" | "api";
+  native?: NativeConfig;
   port: number;
   openai: BackendConfig;
   anthropic: BackendConfig;
