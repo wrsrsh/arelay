@@ -42,13 +42,17 @@ if(args[0]==='login'||args[0]==='auth') {
   return {
     dir,
     command,
-    config: { ...defaultNativeConfig, enabled: true, [client]: { command } },
+    config: {
+      ...defaultNativeConfig,
+      enabled: true,
+      [client]: { command, configDir: dir },
+    },
   };
 }
 for (const target of ["claude", "codex"] as const) {
   test(`${target} checks CLI auth without exposing account details`, async (t) => {
     const f = await fake(t, target);
-    const status = await nativeAuth(target, f.command);
+    const status = await nativeAuth(target, f.command, undefined, f.dir);
     assert.equal(status.subscription, true);
     assert.ok(!JSON.stringify(status).includes("private@example"));
   });
@@ -61,12 +65,19 @@ for (const target of ["claude", "codex"] as const) {
     assert.equal(result.text, "done hello");
     assert.equal(result.target, target);
   });
-  test(`${target} rejects API auth in subscription mode`, async (t) => {
+  test(`${target} respects its supported native authentication`, async (t) => {
     const f = await fake(t, target, "api");
-    await assert.rejects(
-      runNativeTask({ target, task: "hi", cwd: f.dir }, f.config),
-      /subscription login/,
-    );
+    if (target === "codex") {
+      const result = await runNativeTask(
+        { target, task: "hi", cwd: f.dir },
+        f.config,
+      );
+      assert.equal(result.text, "done hi");
+    } else
+      await assert.rejects(
+        runNativeTask({ target, task: "hi", cwd: f.dir }, f.config),
+        /subscription login/,
+      );
   });
 }
 test("Native worker environment excludes credentials, provider overrides and recursive session guards", () => {
@@ -98,6 +109,16 @@ test("Invocation keeps task out of argv and never bypasses permissions", () => {
     assert.ok(!invocation.args.join(" ").includes("secret task"));
     assert.ok(!invocation.args.join(" ").includes("bypass"));
     assert.ok(!invocation.args.includes("--bare"));
+    if (target === "codex") {
+      assert.ok(!invocation.args.includes("--ignore-user-config"));
+      assert.ok(
+        !invocation.args.some(
+          (arg) =>
+            arg.includes("model_provider=") ||
+            arg.includes("forced_login_method="),
+        ),
+      );
+    }
     assert.throws(
       () =>
         buildWorkerInvocation(

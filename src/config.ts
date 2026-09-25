@@ -81,6 +81,13 @@ export function validateConfig(value: unknown): Config {
         )
           throw new Error("Native CLI paths must be absolute");
         if (
+          worker.configDir !== undefined &&
+          (typeof worker.configDir !== "string" ||
+            !isAbsolute(worker.configDir) ||
+            /[\x00-\x1f]/.test(worker.configDir))
+        )
+          throw new Error("Native CLI config directories must be absolute");
+        if (
           worker.model !== undefined &&
           (typeof worker.model !== "string" ||
             !/^[\w][\w.:/-]{0,199}$/.test(worker.model))

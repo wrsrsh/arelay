@@ -3,8 +3,9 @@
 use codex from claude code, or claude code from codex.
 
 arelay adds a `delegate` tool to each client. it runs the other installed CLI as
-a worker, using that CLI's own login and tools. subscriptions are the default;
-API keys and azure are optional.
+a worker, using that CLI's own authentication and tools. codex keeps its configured
+provider, including azure. an already-working codex CLI doesn't need a separate
+chatgpt login.
 
 ## install
 
@@ -22,14 +23,8 @@ works on macos and linux. the curl install goes into `~/.local/bin`.
 
 ## setup
 
-sign in using the original CLIs:
-
-```sh
-codex login
-claude auth login
-```
-
-then run:
+if your CLIs already work, keep their existing setup. for subscription sign-in,
+use `codex login` or `claude auth login` in the original CLI. then run:
 
 ```sh
 arelay setup
@@ -87,6 +82,9 @@ arelay setup --api
 API mode swaps subagent models while keeping the parent's tool loop. it requires
 provider API keys. azure is under advanced settings and asks for your OpenAI v1
 endpoint and deployment ID; nothing is hardcoded to a particular deployment.
+an existing azure-backed codex CLI also works directly in native mode. its declared
+credential variables can come from the environment, arelay's credentials file,
+or their named macos keychain items.
 
 API mode changes codex to direct function tools/v1 agents and disables hosted web
 search. it also disables claude's deferred tool search. hosted tools,

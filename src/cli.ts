@@ -239,7 +239,7 @@ async function main(): Promise<void> {
     if (config.mode === "native") {
       for (const client of ["claude", "codex"] as const)
         console.log(
-          `${client}: ${(await nativeAuth(client, config.native?.[client]?.command)).message}`,
+          `${client}: ${(await nativeAuth(client, config.native?.[client]?.command, undefined, config.native?.[client]?.configDir)).message}`,
         );
     } else
       for (const backend of [config.openai, config.anthropic])

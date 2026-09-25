@@ -164,6 +164,19 @@ export async function runNativeSetup(
       if (status.command)
         config.native[target] = {
           command: status.command,
+          ...((
+            target === "codex"
+              ? process.env.CODEX_HOME
+              : process.env.CLAUDE_CONFIG_DIR
+          )
+            ? {
+                configDir: resolve(
+                  (target === "codex"
+                    ? process.env.CODEX_HOME
+                    : process.env.CLAUDE_CONFIG_DIR)!,
+                ),
+              }
+            : {}),
           ...(config.native[target]?.model
             ? { model: config.native[target]!.model }
             : {}),
@@ -242,17 +255,18 @@ export async function runNativeSetup(
         throw new Error("Selected connection is not ready");
       await ui.progress("connecting", () => deps.apply(config, clients, opts));
       const pending = targets.filter(
-        (target) => !auth.get(target)?.subscription,
+        (target) =>
+          !(auth.get(target)?.ready ?? auth.get(target)?.subscription),
       );
       if (pending.length)
         ui.note(
           pending
             .map(
               (target) =>
-                `Before delegating: ${target === "claude" ? "claude auth login" : "codex login"}`,
+                `${target}: ${auth.get(target)?.message || "Check the original CLI authentication"}`,
             )
             .join("\n"),
-          "sign in using the original CLI",
+          "finish CLI authentication",
         );
       ui.outro(
         "connected · restart your clients and ask them to use arelay's delegate tool",
