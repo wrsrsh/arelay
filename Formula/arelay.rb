@@ -1,8 +1,8 @@
 class Arelay < Formula
   desc "Delegate between Claude Code and Codex using their native CLIs"
   homepage "https://github.com/wrsrsh/arelay"
-  url "https://github.com/wrsrsh/arelay/releases/download/v0.3.1/arelay.tar.gz"
-  sha256 "23171f5f36718fa5737f5c739eede13c4b94c61cf1b2a26e35f42635655c4a8a"
+  url "https://github.com/wrsrsh/arelay/releases/download/v0.3.2/arelay.tar.gz"
+  sha256 "b29a7ef4c016197c7b57d1d819b88aaafe0ab703d8fc86f48210b47de2bf3294"
   license all_of: ["MIT", "Apache-2.0", "BSD-3-Clause"]
 
   depends_on "node"
@@ -15,14 +15,8 @@ class Arelay < Formula
 
   def caveats
     <<~EOS
-      arelay manages its own login service (not brew services).
-      Config: ~/.config/arelay/config.json
-      Use your working Codex provider and Claude Code login.
-      Connect native workers: arelay setup
-      Optional API keys or Azure: arelay setup --api
+      Connect your CLIs and start at login: arelay install
       Before uninstalling: arelay unsetup both && arelay service uninstall
-      Open setup and enable the login service: arelay install
-      For unattended installation: arelay install --no-interactive
     EOS
   end
 
