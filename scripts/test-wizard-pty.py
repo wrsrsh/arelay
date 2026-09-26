@@ -18,9 +18,10 @@ secret = "canary-key-NEVER-DISPLAY-123"
 pid, fd = pty.fork()
 if pid == 0:
     fcntl.ioctl(1, termios.TIOCSWINSZ, struct.pack("HHHH", 45, 100, 0, 0))
-    os.environ["TERM"] = "xterm-256color"
-    os.environ.pop("CI", None)
-    os.environ.pop("ARELAY_NO_TUI", None)
+    if mode != "unattended":
+        os.environ["TERM"] = "xterm-256color"
+        os.environ.pop("CI", None)
+        os.environ.pop("ARELAY_NO_TUI", None)
     if "NO_COLOR" in os.environ:
         os.environ.pop("FORCE_COLOR", None)
     else:
@@ -62,7 +63,10 @@ def send(value):
 
 
 try:
-    wait_for("01 / routing" if "--api" in command else "Use native CLI workers")
+    if mode == "unattended":
+        wait_for("Run arelay setup to connect your clients.")
+    else:
+        wait_for("01 / routing" if "--api" in command else "Connect")
     if mode == "secret":
         send(b"\r")
         wait_for("02 / provider")
@@ -83,7 +87,7 @@ try:
         send(b"\r")
         wait_for("06 / review")
         send(b"\x1b")
-    else:
+    elif mode != "unattended":
         send(b"\x03" if mode == "ctrl-c" else b"\x1b")
     while status is None:
         read_chunk()
@@ -97,14 +101,18 @@ try:
         read_chunk()
     text = output.decode(errors="replace")
     assert os.waitstatus_to_exitcode(status) == 0, "wizard exited unsuccessfully"
-    assert "cancelled" in text.lower(), "cancellation was not acknowledged"
     assert "arelay" in text, "application name was not rendered"
     assert secret not in text, "plaintext secret appeared in terminal output"
-    assert "\x1b[?25h" in text, "terminal cursor was not restored"
-    if "NO_COLOR" in os.environ:
-        assert not re.search(r"\x1b\[3[0-7]m", text), "NO_COLOR was ignored"
+    if mode == "unattended":
+        assert "running, starts at login" in text, "service installation did not complete"
+        assert "Both directions" not in text, "unattended install opened a picker"
     else:
-        assert "\x1b[36m" in text, "colored branding was not rendered"
+        assert "cancelled" in text.lower(), "cancellation was not acknowledged"
+        assert "\x1b[?25h" in text, "terminal cursor was not restored"
+        if "NO_COLOR" in os.environ:
+            assert not re.search(r"\x1b\[3[0-7]m", text), "NO_COLOR was ignored"
+        else:
+            assert "\x1b[36m" in text, "colored branding was not rendered"
     if mode == "secret":
         assert "*****" in text, "password input was not masked"
         assert "your setup" in text, "routing preview was not rendered"

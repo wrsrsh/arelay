@@ -21,8 +21,8 @@ curl --proto '=https' --tlsv1.2 -fsSL "$BASE/SHA256SUMS" -o "$TMP/SHA256SUMS"
   cd "$TMP"
   # Only verify the expected archive. Never let a checksum file select local paths.
   awk '$2 == "arelay.tar.gz" && length($1) == 64 && $1 !~ /[^0-9a-f]/ { print; found++ } END { if (found != 1) exit 1 }' SHA256SUMS > expected.sha256
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum -c expected.sha256
-  else shasum -a 256 -c expected.sha256; fi
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum -c expected.sha256 >/dev/null
+  else shasum -a 256 -c expected.sha256 >/dev/null; fi
 )
 # Reject unexpected archive paths/types before extracting a downloaded release.
 tar -tzf "$TMP/arelay.tar.gz" > "$TMP/entries"
@@ -48,18 +48,12 @@ chmod 755 "$TARGET/arelay.mjs"
 # -n avoids following an existing current-directory symlink on macOS and Linux.
 ln -sfn "$TARGET" "$PREFIX/share/arelay/current"
 ln -sfn "$PREFIX/share/arelay/current/arelay.mjs" "$PREFIX/bin/arelay"
-if [ "${ARELAY_NO_SERVICE:-0}" != 1 ]; then
-  # curl | sh owns stdin. Give the wizard the controlling terminal, not the script pipe.
-  # Keep redirected output, CI and explicit opt-outs fully noninteractive.
-  case "${CI:-}" in ''|0|false|FALSE) IN_CI=0 ;; *) IN_CI=1 ;; esac
-  case "${ARELAY_NO_TUI:-}" in ''|0|false|FALSE) NO_TUI=0 ;; *) NO_TUI=1 ;; esac
-  if [ -t 1 ] && [ "$IN_CI" = 0 ] && [ "$NO_TUI" = 0 ] && [ "${TERM:-}" != dumb ] && ( : </dev/tty ) 2>/dev/null; then
-    "$PREFIX/bin/arelay" install --interactive </dev/tty
-  else
-    "$PREFIX/bin/arelay" install --no-interactive
-  fi
+if [ "${ARELAY_NO_SERVICE:-0}" = 1 ]; then
+  printf 'arelay %s installed. Run arelay install to connect.\n' "$ACTUAL"
+# Give curl | sh a keyboard; the CLI handles CI, TERM and ARELAY_NO_TUI.
+elif [ -t 1 ] && ( : </dev/tty ) 2>/dev/null; then
+  "$PREFIX/bin/arelay" install </dev/tty
 else
-  echo 'Service installation skipped (ARELAY_NO_SERVICE=1). Run arelay install later.'
+  "$PREFIX/bin/arelay" install --no-interactive
 fi
-printf '\nInstalled arelay %s at %s/bin/arelay\n' "$ACTUAL" "$PREFIX"
 case ":$PATH:" in *":$PREFIX/bin:"*) ;; *) printf 'Add %s/bin to your shell PATH.\n' "$PREFIX" ;; esac

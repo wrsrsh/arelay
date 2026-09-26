@@ -4,10 +4,16 @@ For installation and the interactive setup, start with the [README](../README.md
 
 ## Native CLI setup (default)
 
-`arelay setup` has two normal choices: select the clients, then connect. Running
-`arelay` without arguments does the same in a terminal, or prints help when input
-or output is redirected. Model overrides and workspace edits are optional actions
-on the confirmation screen. API configuration is an explicit advanced option.
+`arelay setup` opens one `Connect` picker: `Both directions`, `Claude → Codex`,
+or `Codex → Claude`. Selecting a direction preflights the selected clients, then
+saves the connections and starts the service. There is no confirmation screen.
+Escape or Ctrl+C cancels before writes. Existing model overrides appear before
+the picker; if workspace writes are already enabled, setup warns before selection.
+Setup preserves these values rather than offering model or permission menus.
+
+Running `arelay` without arguments does the same in a terminal, or prints help
+when input or output is redirected. API configuration is separate: use
+`arelay setup --api`.
 
 Native mode registers a stdio MCP server named `arelay`. Each selected client gets
 a `delegate` tool targeting the other CLI. It does not intercept built-in agents,
@@ -31,8 +37,9 @@ ChatGPT.
 
 ### Permissions and isolation
 
-Workers are read-only by default. To allow edits, explicitly enable workspace edits
-in setup; the parent must also request `permission: "workspace-write"` on that call.
+Workers are read-only by default. To allow edits, set `native.allowWrites` to
+`true` in `~/.config/arelay/config.json` and restart the service. The parent must
+also request `permission: "workspace-write"` on that `delegate` call.
 Codex uses its read-only/workspace-write sandbox with approval requests denied.
 Claude uses plan/acceptEdits mode, a restricted set of file tools, and denies
 permission requests that would require interactive approval. Permission bypass
@@ -60,12 +67,16 @@ and `arelay delegate` read this file; it is unrelated to provider credentials.
 Processes running as your user can read it, so this is not a sandbox against
 untrusted programs running under the same account.
 
-Native settings live in the existing config's `native` block. Setup records
-absolute CLI paths, optional model overrides, `allowWrites` (false by default),
-`timeoutMs` (600000), and `maxConcurrent` (3). Reconnect after moving/removing CLI
-executables. An explicit `CODEX_HOME` or `CLAUDE_CONFIG_DIR` is saved as the worker's
-`configDir` so the service can use that same CLI configuration. Run `arelay doctor`
-to check login/provider readiness.
+Native settings live in the `native` block of `~/.config/arelay/config.json`.
+Setup records absolute CLI paths and preserves existing model overrides and
+`allowWrites` (false by default). Defaults for `timeoutMs` and `maxConcurrent`
+are 600000 and 3. To override a worker's model, edit `native.claude.model` or
+`native.codex.model` in that file. Run `arelay service restart` after changing
+models or `native.allowWrites`; setup has no menus for these settings.
+
+Reconnect after moving/removing CLI executables. An explicit `CODEX_HOME` or
+`CLAUDE_CONFIG_DIR` is saved as the worker's `configDir` so the service can use
+that same CLI configuration. Run `arelay doctor` to check login/provider readiness.
 
 ### Connections and migration
 
@@ -87,9 +98,10 @@ tool; it does not disable the parent's sandbox or the worker's read-only gate.
 
 ## Advanced API setup
 
-`arelay setup --api` retains the API-backed model-swapping integration. Standard
-OpenAI/Anthropic APIs are listed first. Azure is an advanced choice that asks for
-your versioned endpoint and deployment name. Existing personal endpoints do not
+`arelay setup --api` opens the API-backed model-swapping integration; it is not
+an option in the native `Connect` picker. Standard OpenAI/Anthropic APIs are listed
+first. Azure is an advanced choice that asks for your versioned endpoint and
+deployment name. Existing personal endpoints do not
 choose the default integration mode.
 
 This setup can save keys privately, configure clients, or save backends only. It
@@ -106,17 +118,20 @@ redirected input/output, and `TERM=dumb` are noninteractive. Explicit
 `arelay setup claude|codex|both` commands keep their legacy noninteractive API-mode behavior; use bare `arelay setup` for native CLI connections.
 `NO_COLOR=1` removes colors without disabling keyboard navigation.
 
-The curl installer reopens `/dev/tty` only when output is a terminal and CI and
-opt-out flags are absent. This lets `curl | sh` accept keyboard input without
-reading the installation script as answers. Cancelling leaves the binary
-installed, but does not save wizard configuration or install a service.
+The curl installer reopens `/dev/tty` when output is a terminal, so `curl | sh`
+can accept keyboard input without reading the installation script as answers.
+The CLI decides whether to show prompts using its existing terminal, CI,
+`ARELAY_NO_TUI`, and `TERM` checks; CI and opt-outs remain noninteractive.
+Cancelling before selecting a direction leaves the binary installed without
+saving wizard configuration or installing a service. Checksum verification
+still runs, but successful checks stay quiet.
 
 Installer options:
 
 | Variable                | Purpose                                                      |
 | ----------------------- | ------------------------------------------------------------ |
 | `ARELAY_PREFIX`         | Installation prefix; defaults to `~/.local`                  |
-| `ARELAY_VERSION=v0.3.1` | Pin a release instead of downloading the latest              |
+| `ARELAY_VERSION=v0.3.2` | Pin a release instead of downloading the latest              |
 | `ARELAY_NO_SERVICE=1`   | Install the binary only; skip setup and service installation |
 | `ARELAY_NO_TUI=1`       | Install/start the service without opening the wizard         |
 
