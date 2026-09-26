@@ -38,7 +38,7 @@ async function isolated(t: { after: (fn: () => Promise<void>) => void }) {
 test("Non-TTY help/version never start a wizard or create configuration", async (t) => {
   const { dir, env } = await isolated(t);
   const help = await exec(process.execPath, ["--import", "tsx", cli], { env });
-  assert.match(help.stdout, /Open the interactive/);
+  assert.match(help.stdout, /Connect your CLIs/);
   assert.ok(!help.stdout.includes("\x1b"));
   const version = await exec(
     process.execPath,

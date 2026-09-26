@@ -14,6 +14,7 @@ import {
   defaultNativeConfig,
   type NativeAuth,
   type NativeClient,
+  type NativeWorkerConfig,
 } from "./types.js";
 import { nativeAuth } from "./worker.js";
 import {
@@ -26,7 +27,10 @@ import { service } from "../service.js";
 
 export interface NativeSetupDeps {
   load(): Promise<Config>;
-  auth(client: NativeClient): Promise<NativeAuth>;
+  auth(
+    client: NativeClient,
+    worker?: Partial<NativeWorkerConfig>,
+  ): Promise<NativeAuth>;
   options(): Promise<ConnectionOptions>;
   preview: typeof previewNativeClient;
   apply(
@@ -44,7 +48,8 @@ export const nativeSetupServices: NativeSetupDeps = {
       return structuredClone(defaultConfig);
     }
   },
-  auth: (client) => nativeAuth(client),
+  auth: (client, worker) =>
+    nativeAuth(client, worker?.command, undefined, worker?.configDir),
   async options() {
     const cli = resolve(process.argv[1] || "");
     if (!(await realpath(cli)).endsWith(".mjs"))
@@ -111,41 +116,34 @@ export const nativeSetupServices: NativeSetupDeps = {
 export async function runNativeSetup(
   ui: WizardUI,
   deps: NativeSetupDeps,
-  advanced: () => Promise<void>,
 ): Promise<void> {
   const config = structuredClone(await deps.load());
   ui.intro();
   try {
+    ui.note(
+      "Adds a delegate tool using your existing CLIs.\n" +
+        (config.native?.allowWrites
+          ? "Starts at login."
+          : "Read-only workers · starts at login."),
+      "setup",
+    );
+    if (config.native?.allowWrites)
+      ui.warn("Workspace edits are enabled in your existing settings.");
+    const models = (["claude", "codex"] as const)
+      .filter((client) => config.native?.[client]?.model)
+      .map((client) => `${client}: ${config.native![client]!.model}`);
+    if (models.length) ui.note(models.join("\n"), "saved model overrides");
     const route = await ui.select({
-      message: "Use native CLI workers",
+      message: "Connect",
       options: [
-        {
-          value: "both",
-          label: "Both directions",
-          hint: "Claude → Codex · Codex → Claude",
-        },
-        {
-          value: "claude",
-          label: "Claude → Codex",
-          hint: "use your Codex login",
-        },
-        {
-          value: "codex",
-          label: "Codex → Claude",
-          hint: "use your Claude Code login",
-        },
-        {
-          value: "api",
-          label: "Advanced: API keys / Azure",
-          hint: "model swapping, not native CLI workers",
-        },
+        { value: "both", label: "Both directions" },
+        { value: "claude", label: "Claude → Codex" },
+        { value: "codex", label: "Codex → Claude" },
       ],
       initialValue: "both",
     });
-    if (route === "api") {
-      await advanced();
-      return;
-    }
+    if (!["both", "claude", "codex"].includes(route))
+      throw new Error("Choose both, claude, or codex");
     const clients: NativeClient[] =
       route === "both" ? ["claude", "codex"] : [route as NativeClient];
     const targets = clients.map((client): NativeClient =>
@@ -158,121 +156,44 @@ export async function runNativeSetup(
       enabled: true,
     };
     const auth = new Map<NativeClient, NativeAuth>();
+    const blocked: string[] = [];
     for (const target of targets) {
-      const status = await deps.auth(target);
+      const configDir =
+        target === "codex"
+          ? process.env.CODEX_HOME
+          : process.env.CLAUDE_CONFIG_DIR;
+      const worker = {
+        ...config.native[target],
+        ...(configDir ? { configDir: resolve(configDir) } : {}),
+      };
+      const status = await deps.auth(target, worker);
       auth.set(target, status);
+      if (!status.installed) blocked.push(`${target}: ${status.message}`);
       if (status.command)
-        config.native[target] = {
-          command: status.command,
-          ...((
-            target === "codex"
-              ? process.env.CODEX_HOME
-              : process.env.CLAUDE_CONFIG_DIR
-          )
-            ? {
-                configDir: resolve(
-                  (target === "codex"
-                    ? process.env.CODEX_HOME
-                    : process.env.CLAUDE_CONFIG_DIR)!,
-                ),
-              }
-            : {}),
-          ...(config.native[target]?.model
-            ? { model: config.native[target]!.model }
-            : {}),
-        };
+        config.native[target] = { ...worker, command: status.command };
     }
     const opts = await deps.options();
-    const blocked: string[] = [];
     for (const client of clients) {
-      const p = await deps.preview(client, opts);
-      if (p.status === "blocked") blocked.push(`${client}: ${p.message}`);
+      const preview = await deps.preview(client, opts);
+      if (preview.status === "blocked")
+        blocked.push(`${client}: ${preview.message}`);
     }
-    for (;;) {
+    if (blocked.length)
+      throw new Error(
+        `${blocked.join("\n")}\nNothing changed. Fix this, then run arelay setup.`,
+      );
+    await ui.progress("connecting", () => deps.apply(config, clients, opts));
+    const pending = targets.filter(
+      (target) => !(auth.get(target)?.ready ?? auth.get(target)?.subscription),
+    );
+    if (pending.length)
       ui.note(
-        targets
-          .map(
-            (target) =>
-              `${target}: ${auth.get(target)?.subscription ? "login ready" : auth.get(target)?.message}\nmodel: ${config.native?.[target]?.model || "CLI default"}`,
-          )
-          .join("\n\n"),
-        "native workers",
+        pending
+          .map((target) => `${target}: ${auth.get(target)?.message}`)
+          .join("\n"),
+        "finish CLI authentication",
       );
-      ui.note(
-        "Adds an arelay delegate tool to the selected clients. Built-in agents and model providers stay as they are. Workers use their own tools, not the parent's tool loop.",
-        "connection",
-      );
-      for (const message of blocked) ui.warn(message);
-      const missing = targets.some((target) => !auth.get(target)?.installed);
-      const action = await ui.select({
-        message: "Connect and start at login?",
-        options: [
-          {
-            value: "connect",
-            label: "Connect",
-            hint: "restart your clients afterward",
-            disabled: missing || blocked.length > 0,
-          },
-          {
-            value: "models",
-            label: "Change worker models",
-            hint: "optional; CLI defaults are recommended",
-          },
-          {
-            value: "writes",
-            label: config.native.allowWrites
-              ? "Workspace edits: on"
-              : "Workspace edits: off",
-            hint: "toggle; read-only is the default",
-          },
-          { value: "cancel", label: "Cancel" },
-        ],
-        initialValue: missing || blocked.length ? "cancel" : "connect",
-      });
-      if (action === "cancel") throw new WizardCancelled();
-      if (action === "writes") {
-        config.native.allowWrites = !config.native.allowWrites;
-        continue;
-      }
-      if (action === "models") {
-        for (const target of targets) {
-          const model = await ui.text({
-            message: `${target} model (blank = CLI default)`,
-            initialValue: config.native[target]?.model || "",
-            validate: (value) =>
-              !value || /^[\w][\w.:/-]{0,199}$/.test(value)
-                ? undefined
-                : "Use a model ID without spaces",
-          });
-          if (config.native[target]) {
-            if (model) config.native[target]!.model = model;
-            else delete config.native[target]!.model;
-          }
-        }
-        continue;
-      }
-      if (missing || blocked.length)
-        throw new Error("Selected connection is not ready");
-      await ui.progress("connecting", () => deps.apply(config, clients, opts));
-      const pending = targets.filter(
-        (target) =>
-          !(auth.get(target)?.ready ?? auth.get(target)?.subscription),
-      );
-      if (pending.length)
-        ui.note(
-          pending
-            .map(
-              (target) =>
-                `${target}: ${auth.get(target)?.message || "Check the original CLI authentication"}`,
-            )
-            .join("\n"),
-          "finish CLI authentication",
-        );
-      ui.outro(
-        "connected · restart your clients and ask them to use arelay's delegate tool",
-      );
-      return;
-    }
+    ui.outro("connected. restart your clients to use delegate.");
   } catch (e) {
     if (!(e instanceof WizardCancelled)) throw e;
     ui.cancel("Cancelled. No setup changes saved.");

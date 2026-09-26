@@ -24,7 +24,7 @@ const HELP = `arelay ${VERSION} — cross-provider subagents
 Usage: arelay <command>
   install                 Open setup in a terminal; otherwise start the service
   install --no-interactive Start the service without prompting
-  setup                   Open the interactive native CLI connection setup
+  setup                   Connect your CLIs
   setup --api             Advanced API keys / Azure model swapping
   delegate claude|codex TASK  Run a read-only native CLI worker in this directory
   init                    Create config without starting or changing clients
@@ -40,7 +40,6 @@ Usage: arelay <command>
 Config: ~/.config/arelay/config.json (override with ARELAY_HOME)
 Native workers use the original CLIs' own logins. No subscription tokens are copied.
 API keys and Azure are optional advanced integrations.
-The setup previews connections before editing client settings.
 Use ARELAY_NO_TUI=1 or --no-interactive for unattended installation.
 NO_COLOR disables colors. The explicit setup <client> commands are legacy API mode.
 Restore clients before stopping/removing arelay, or their requests will fail.
@@ -57,7 +56,7 @@ async function check(endpoint: "health" | "stats"): Promise<unknown> {
 async function onboarding(api = false): Promise<void> {
   if (!interactiveTerminal())
     throw new Error(
-      "Interactive setup needs a terminal. Run arelay setup in your terminal, or use arelay setup claude|codex|both for scripted setup.",
+      "Interactive setup needs a terminal. Run arelay setup in your terminal; use arelay install --no-interactive to start only the service.",
     );
   const ui = createTerminalUI();
   const advanced = async () => {
@@ -65,7 +64,7 @@ async function onboarding(api = false): Promise<void> {
     if (result === "service-failed") process.exitCode = 1;
   };
   if (api) await advanced();
-  else await runNativeSetup(ui, nativeSetupServices, advanced);
+  else await runNativeSetup(ui, nativeSetupServices);
 }
 
 async function main(): Promise<void> {
@@ -144,7 +143,7 @@ async function main(): Promise<void> {
     await initConfig();
     await service("install");
     console.log(
-      `arelay installed and started. It will run at login.\nRun arelay setup in your terminal to choose providers, models, and routes.\nConfig: ${paths().config}\nOn Linux, keep it running after logout with: loginctl enable-linger "$USER"`,
+      `arelay ${VERSION} · running, starts at login\nRun arelay setup to connect your clients.`,
     );
     return;
   }

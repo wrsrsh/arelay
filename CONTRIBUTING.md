@@ -17,8 +17,9 @@ local Claude Code and Codex executables; it uses disposable configuration and
 mock backends. Add the tested versions to `docs/reference.md` when updating support.
 
 The setup wizard separates terminal rendering, draft selection, and configuration
-writes. Cancellation before confirmation must not write files. PTY tests cover
-real keyboard input, password masking, cursor restoration, and `NO_COLOR`.
+writes. Native setup commits after its single direction choice; API setup has a
+separate confirmation. Cancelling either picker must not write files. PTY tests
+cover keyboard input, password masking, cursor restoration, and `NO_COLOR`.
 The offline installer test also checks piped stdin with a controlling terminal.
 
 Before a release:
