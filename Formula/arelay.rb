@@ -1,8 +1,8 @@
 class Arelay < Formula
   desc "Delegate between Claude Code and Codex using their native CLIs"
   homepage "https://github.com/wrsrsh/arelay"
-  url "https://github.com/wrsrsh/arelay/releases/download/v0.3.2/arelay.tar.gz"
-  sha256 "b29a7ef4c016197c7b57d1d819b88aaafe0ab703d8fc86f48210b47de2bf3294"
+  url "https://github.com/wrsrsh/arelay/releases/download/v0.4.0/arelay.tar.gz"
+  sha256 "122f1d4cd5f3c4da8981c953b04b628fb2e4ed5d719747ca645ceba8463459ab"
   license all_of: ["MIT", "Apache-2.0", "BSD-3-Clause"]
 
   depends_on "node"
