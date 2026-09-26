@@ -12,10 +12,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, stringify } from "smol-toml";
 import {
+  agentPath,
   connectNativeClient,
   disconnectNativeClient,
   previewNativeClient,
 } from "../src/native/connect.js";
+import { claudeSubagent, codexAgentRole } from "../src/native/agents.js";
 
 async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
   const root = await mkdtemp(join(tmpdir(), "arelay-connect-"));
@@ -86,6 +88,24 @@ for (const client of ["claude", "codex"] as const)
         )
       ).includes("DONT_COPY_ME"),
     );
+    const agent = agentPath(client);
+    assert.equal(
+      agent,
+      join(
+        f.root,
+        client,
+        "agents",
+        client === "claude" ? "codex.md" : "claude.toml",
+      ),
+    );
+    assert.equal(
+      await readFile(agent, "utf8"),
+      client === "claude" ? claudeSubagent() : codexAgentRole(),
+    );
+    assert.equal(
+      (await previewNativeClient(client, f.opts)).message,
+      "Connected",
+    );
     data.new_setting = "later edit";
     await writeFile(
       path,
@@ -95,6 +115,7 @@ for (const client of ["claude", "codex"] as const)
     const restored = await parseFile();
     assert.equal(restored.new_setting, "later edit");
     assert.equal(restored[key]?.arelay, undefined);
+    await assert.rejects(readFile(agent), { code: "ENOENT" });
     if (client === "claude")
       assert.equal(restored.oauthAccount.private, "DONT_COPY_ME");
     else assert.equal(restored.model, "original");
@@ -123,3 +144,44 @@ test("Disconnect refuses to erase an edited owned entry", async (t) => {
   await writeFile(f.claude, JSON.stringify(data));
   await assert.rejects(disconnectNativeClient("claude"), /refusing to remove/);
 });
+
+test("A version 1 connection gains the subagent definition on reconnect", async (t) => {
+  const f = await fixture(t);
+  await connectNativeClient("claude", f.opts);
+  const meta = join(f.opts.home, "state", "native-claude.json");
+  const saved = JSON.parse(await readFile(meta, "utf8"));
+  assert.equal(saved.version, 2);
+  delete saved.agent;
+  saved.version = 1;
+  await writeFile(meta, JSON.stringify(saved));
+  await rm(agentPath("claude"));
+  assert.match(
+    (await previewNativeClient("claude", f.opts)).message,
+    /will be updated/,
+  );
+  assert.deepEqual(await connectNativeClient("claude", f.opts), {
+    changed: true,
+  });
+  assert.equal(await readFile(agentPath("claude"), "utf8"), claudeSubagent());
+  assert.equal(JSON.parse(await readFile(meta, "utf8")).version, 2);
+});
+for (const client of ["claude", "codex"] as const)
+  test(`${client}: an unowned agent definition is never overwritten or removed`, async (t) => {
+    const f = await fixture(t);
+    await mkdir(join(f.root, client, "agents"), { recursive: true });
+    await writeFile(agentPath(client), "user's own agent");
+    const preview = await previewNativeClient(client, f.opts);
+    assert.equal(preview.status, "blocked");
+    assert.match(preview.message, /unowned file/);
+    await assert.rejects(connectNativeClient(client, f.opts), /unowned file/);
+    assert.equal(await readFile(agentPath(client), "utf8"), "user's own agent");
+    await rm(agentPath(client));
+    await connectNativeClient(client, f.opts);
+    await writeFile(agentPath(client), "edited by the user");
+    assert.equal((await previewNativeClient(client, f.opts)).status, "blocked");
+    await assert.rejects(disconnectNativeClient(client), /refusing to remove/);
+    assert.equal(
+      await readFile(agentPath(client), "utf8"),
+      "edited by the user",
+    );
+  });

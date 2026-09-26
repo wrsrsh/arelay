@@ -6,6 +6,7 @@ import { parse, stringify } from "smol-toml";
 import { atomicWrite, paths } from "../config.js";
 import type { NativeClient } from "./types.js";
 import type { JsonObject } from "../types.js";
+import { claudeSubagent, codexAgentRole, target as other } from "./agents.js";
 
 export interface ConnectionOptions {
   node: string;
@@ -13,10 +14,12 @@ export interface ConnectionOptions {
   home: string;
 }
 interface Saved {
-  version: 1;
+  version: 1 | 2;
   target: string;
   client: NativeClient;
   entryHash: string;
+  /** The subagent definition installed for this client (version 2). */
+  agent?: { path: string; hash: string };
 }
 const hash = (value: unknown): string =>
   createHash("sha256")
@@ -40,18 +43,32 @@ async function optional(path: string): Promise<string | undefined> {
     throw e;
   }
 }
+function clientHome(client: NativeClient): string {
+  if (client === "claude")
+    return process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  if (client === "codex")
+    return process.env.CODEX_HOME || join(homedir(), ".codex");
+  throw new Error("Unknown client");
+}
 function targetPath(client: NativeClient): string {
   if (client === "claude")
     return process.env.CLAUDE_CONFIG_DIR
       ? join(process.env.CLAUDE_CONFIG_DIR, ".claude.json")
       : join(homedir(), ".claude.json");
-  if (client === "codex")
-    return join(
-      process.env.CODEX_HOME || join(homedir(), ".codex"),
-      "config.toml",
-    );
-  throw new Error("Unknown client");
+  return join(clientHome(client), "config.toml");
 }
+/** Where the client discovers the other CLI as one of its own subagents. */
+export function agentPath(client: NativeClient): string {
+  return join(
+    clientHome(client),
+    "agents",
+    client === "claude" ? `${other(client)}.md` : `${other(client)}.toml`,
+  );
+}
+const agentDefinition = (client: NativeClient): string =>
+  client === "claude" ? claudeSubagent() : codexAgentRole();
+const agentLabel = (client: NativeClient) =>
+  `the ${other(client)} ${client === "claude" ? "subagent" : "agent role"} file`;
 function metaPath(client: NativeClient): string {
   return join(paths().state, `native-${client}.json`);
 }
@@ -92,10 +109,13 @@ async function saved(client: NativeClient): Promise<Saved | undefined> {
   if (raw === undefined) return;
   const value = JSON.parse(raw) as Saved;
   if (
-    value.version !== 1 ||
+    ![1, 2].includes(value.version) ||
     value.client !== client ||
     value.target !== targetPath(client) ||
-    !/^[a-f0-9]{64}$/.test(value.entryHash)
+    !/^[a-f0-9]{64}$/.test(value.entryHash) ||
+    (value.agent !== undefined &&
+      (value.agent.path !== agentPath(client) ||
+        !/^[a-f0-9]{64}$/.test(value.agent.hash)))
   )
     throw new Error(
       "Native connection metadata is invalid or belongs to another config directory",
@@ -124,15 +144,25 @@ export async function previewNativeClient(
     const data = document(client, await optional(targetPath(client)));
     const current =
       data[client === "claude" ? "mcpServers" : "mcp_servers"]?.arelay;
+    const agent = await optional(agentPath(client));
     if (meta) {
       if (hash(current ?? null) !== meta.entryHash)
         throw new Error(
           "The arelay MCP entry changed; preserve your edits before reconnecting",
         );
+      if (meta.agent && hash(agent ?? null) !== meta.agent.hash)
+        throw new Error(
+          `${agentLabel(client)} changed; preserve your edits before reconnecting`,
+        );
+      if (!meta.agent && agent !== undefined)
+        throw new Error(
+          `An unowned file exists at ${agentPath(client)}; it will not be overwritten`,
+        );
       return {
         status: "managed",
         message:
-          hash(wanted) === meta.entryHash
+          hash(wanted) === meta.entryHash &&
+          meta.agent?.hash === hash(agentDefinition(client))
             ? "Connected"
             : "Connection will be updated to this arelay version",
       };
@@ -140,6 +170,10 @@ export async function previewNativeClient(
     if (current !== undefined)
       throw new Error(
         "An unowned MCP server named arelay already exists; it will not be overwritten",
+      );
+    if (agent !== undefined)
+      throw new Error(
+        `An unowned file exists at ${agentPath(client)}; it will not be overwritten`,
       );
     return { status: "ready", message: "Ready to connect" };
   } catch (e) {
@@ -181,37 +215,51 @@ export async function connectNativeClient(
     const preview = await previewNativeClient(client, opts);
     if (preview.status === "blocked") throw new Error(preview.message);
     const target = targetPath(client),
+      agentFile = agentPath(client),
       original = await optional(target),
+      originalAgent = await optional(agentFile),
       oldMeta = await optional(metaPath(client));
     const data = document(client, original),
-      wanted = entry(client, opts);
+      wanted = entry(client, opts),
+      definition = agentDefinition(client);
     const key = client === "claude" ? "mcpServers" : "mcp_servers";
     if (
       preview.status === "managed" &&
-      hash(data[key]?.arelay) === hash(wanted)
+      hash(data[key]?.arelay) === hash(wanted) &&
+      originalAgent === definition
     )
       return { changed: false };
     data[key] ??= {};
     data[key].arelay = wanted;
     const text = serialize(client, data);
     const metadata: Saved = {
-      version: 1,
+      version: 2,
       target,
       client,
       entryHash: hash(wanted),
+      agent: { path: agentFile, hash: hash(definition) },
     };
-    if ((await optional(target)) !== original)
+    if (
+      (await optional(target)) !== original ||
+      (await optional(agentFile)) !== originalAgent
+    )
       throw new Error("Client settings changed during setup; retry");
     try {
       await atomicWrite(target, text);
+      await atomicWrite(agentFile, definition);
       await atomicWrite(metaPath(client), JSON.stringify(metadata) + "\n");
     } catch {
-      if ((await optional(target)) !== text)
+      if (
+        (await optional(target)) !== text ||
+        ![originalAgent, definition].includes(await optional(agentFile))
+      )
         throw new Error(
           "Setup failed while client settings changed; preserve your configuration for recovery",
         );
       if (original === undefined) await rm(target, { force: true });
       else await atomicWrite(target, original);
+      if (originalAgent === undefined) await rm(agentFile, { force: true });
+      else await atomicWrite(agentFile, originalAgent);
       if (oldMeta === undefined) await rm(metaPath(client), { force: true });
       else await atomicWrite(metaPath(client), oldMeta);
       throw new Error("Native connection failed; previous settings restored");
@@ -233,11 +281,17 @@ export async function disconnectNativeClient(
       throw new Error(
         "The arelay MCP entry changed; refusing to remove your edits",
       );
+    const agent = meta.agent && (await optional(meta.agent.path));
+    if (meta.agent && hash(agent ?? null) !== meta.agent.hash)
+      throw new Error(
+        `${agentLabel(client)} changed; refusing to remove your edits`,
+      );
     delete data[key].arelay;
     if (!Object.keys(data[key]).length) delete data[key];
     if ((await optional(target)) !== original)
       throw new Error("Client settings changed during disconnect; retry");
     await atomicWrite(target, serialize(client, data));
+    if (meta.agent) await rm(meta.agent.path, { force: true });
     await rm(metaPath(client));
   });
 }

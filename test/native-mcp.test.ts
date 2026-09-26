@@ -58,8 +58,13 @@ test(
     const client = new Client({ name: "arelay-test", version: "1" });
     try {
       await client.connect(transport);
+      assert.match(
+        client.getInstructions() ?? "",
+        /Agent tool \(subagent_type: "codex"\)/,
+      );
       const tools = await client.listTools();
       assert.equal(tools.tools[0]!.name, "delegate");
+      assert.match(tools.tools[0]!.description ?? "", /codex subagent/);
       const result = await client.callTool({
         name: "delegate",
         arguments: { task: "inspect this", cwd: dir },

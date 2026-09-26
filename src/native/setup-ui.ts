@@ -121,7 +121,8 @@ export async function runNativeSetup(
   ui.intro();
   try {
     ui.note(
-      "Adds a delegate tool using your existing CLIs.\n" +
+      "Adds codex as a Claude subagent and claude as a Codex agent,\n" +
+        "using your existing CLIs and logins.\n" +
         (config.native?.allowWrites
           ? "Starts at login."
           : "Read-only workers · starts at login."),
@@ -193,7 +194,9 @@ export async function runNativeSetup(
           .join("\n"),
         "finish CLI authentication",
       );
-    ui.outro("connected. restart your clients to use delegate.");
+    ui.outro(
+      "connected. restart your clients; codex now shows up as a Claude subagent and claude as a Codex agent.",
+    );
   } catch (e) {
     if (!(e instanceof WizardCancelled)) throw e;
     ui.cancel("Cancelled. No setup changes saved.");

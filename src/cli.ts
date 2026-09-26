@@ -24,7 +24,7 @@ const HELP = `arelay ${VERSION} — cross-provider subagents
 Usage: arelay <command>
   install                 Open setup in a terminal; otherwise start the service
   install --no-interactive Start the service without prompting
-  setup                   Connect your CLIs
+  setup                   Connect your CLIs (codex becomes a Claude subagent, claude a Codex agent)
   setup --api             Advanced API keys / Azure model swapping
   delegate claude|codex TASK  Run a read-only native CLI worker in this directory
   init                    Create config without starting or changing clients
@@ -39,6 +39,7 @@ Usage: arelay <command>
 
 Config: ~/.config/arelay/config.json (override with ARELAY_HOME)
 Native workers use the original CLIs' own logins. No subscription tokens are copied.
+After setup, ask Claude for a codex subagent or Codex for a claude agent; no arelay wording needed.
 API keys and Azure are optional advanced integrations.
 Use ARELAY_NO_TUI=1 or --no-interactive for unattended installation.
 NO_COLOR disables colors. The explicit setup <client> commands are legacy API mode.
@@ -217,7 +218,7 @@ async function main(): Promise<void> {
       if (api) console.log(`API requests   ${api}`);
       if (!(data.nativeCodex || data.nativeClaude || api))
         console.log(
-          "\nNo work since startup. Ask your client to use arelay's delegate tool.",
+          "\nNo work since startup. Ask Claude to use a codex subagent, or Codex to spawn a claude agent.",
         );
     }
     return;

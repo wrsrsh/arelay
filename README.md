@@ -2,9 +2,11 @@
 
 use codex from claude code, or claude code from codex.
 
-arelay adds a `delegate` tool that runs the other installed CLI as a worker.
-your existing CLI authentication and provider stay in place, including azure-backed
-codex. an already-working codex CLI doesn't need a separate chatgpt login.
+after setup, `codex` shows up in claude code as one of its own subagents, and
+`claude` shows up in codex as one of its own agents. each runs the other
+installed CLI as a worker. your existing CLI authentication and provider stay
+in place, including azure-backed codex. an already-working codex CLI doesn't
+need a separate chatgpt login.
 
 ## install
 
@@ -26,10 +28,13 @@ have both CLIs installed and working first.
 choose both directions, claude → codex, or codex → claude. selecting a direction
 connects the clients and starts the service. escape or ctrl+c cancels before writes.
 
-restart the clients you connected, then explicitly ask one to use `delegate`:
-“use arelay to have codex review this module.” give the worker the task context
-and workspace directory; it doesn't inherit the parent's transcript.
-workers are read-only by default. built-in subagents stay unchanged.
+restart the clients you connected. then just ask: “have a codex subagent review
+this module,” or in codex, “spawn a claude agent to check this.” both clients are
+also told to delegate more readily than usual, so they will reach for these
+subagents on their own for reviews, research, and parallel work. no arelay
+wording is needed. the worker only sees the prompt it is given, so the parent
+passes the task context and workspace directory. workers are read-only by
+default. built-in subagents stay unchanged.
 
 ```sh
 arelay setup          # connect again

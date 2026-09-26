@@ -16,10 +16,43 @@ when input or output is redirected. API configuration is separate: use
 `arelay setup --api`.
 
 Native mode registers a stdio MCP server named `arelay`. Each selected client gets
-a `delegate` tool targeting the other CLI. It does not intercept built-in agents,
-change main-model providers, translate subscription requests, or copy login tokens.
-The parent must call arelay's tool and supply a self-contained task and workspace
-path. Native workers do not receive the parent's transcript automatically.
+a `delegate` tool targeting the other CLI, plus a subagent definition that wraps
+it (see below), so the other CLI appears as a native subagent. It does not
+intercept built-in agents, change main-model providers, translate subscription
+requests, or copy login tokens. The parent supplies a self-contained task and
+workspace path. Native workers do not receive the parent's transcript
+automatically.
+
+### Subagent presentation
+
+Setup installs one agent definition per connected client, next to its MCP entry:
+
+| Client      | File                          | Appears as                                  |
+| ----------- | ----------------------------- | ------------------------------------------- |
+| Claude Code | `~/.claude/agents/codex.md`   | `codex` in the Agent tool and the task list |
+| Codex       | `~/.codex/agents/claude.toml` | `claude` in `spawn_agent` and agent threads |
+
+`$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` relocate these files with the rest of
+that client's configuration. Each definition is a thin wrapper: the Claude
+subagent runs on Haiku with only the `mcp__arelay__delegate` tool, and the Codex
+role uses low reasoning effort (Codex roles inherit the parent's sandbox and MCP
+servers; the worker's read-only gate is arelay's). Both call `delegate` once
+with the prompt they received and return the worker's answer verbatim, so the
+parent sees an ordinary subagent while the actual work runs in the other CLI
+with its own login.
+
+The MCP server's instructions tell each parent to launch that subagent type
+instead of calling `delegate` directly, and to delegate more readily than it
+otherwise would: reviews, second opinions, research, codebase questions, spikes,
+independent implementation slices, and anything parallelizable. This nudge is
+guidance to the model, not enforced routing; the parent still decides. Codex
+may still ask for approval before its `claude` agent calls the MCP tool.
+
+arelay owns these files only while they match what it wrote. Setup refuses to
+overwrite an existing unowned file at either path, and disconnect refuses to
+remove an edited one; restore your edits elsewhere first. Reconnecting after
+upgrading arelay refreshes the definitions. Claude Code needs a restart when
+its `agents` directory is created for the first time.
 
 Keep an already-working Codex provider configuration. Codex workers support both
 its normal login and configured providers such as Azure; they do not force the
@@ -131,7 +164,7 @@ Installer options:
 | Variable                | Purpose                                                      |
 | ----------------------- | ------------------------------------------------------------ |
 | `ARELAY_PREFIX`         | Installation prefix; defaults to `~/.local`                  |
-| `ARELAY_VERSION=v0.3.2` | Pin a release instead of downloading the latest              |
+| `ARELAY_VERSION=v0.4.0` | Pin a release instead of downloading the latest              |
 | `ARELAY_NO_SERVICE=1`   | Install the binary only; skip setup and service installation |
 | `ARELAY_NO_TUI=1`       | Install/start the service without opening the wizard         |
 
@@ -339,6 +372,7 @@ API-key masking, cancellation, cursor restoration, `NO_COLOR`, and piped install
 `arelay stats` counts native task attempts separately from API requests. Counters
 reset when the daemon restarts. Status/stats polling does not increment active
 work. All-zero counters mean no delegation/API work has reached this daemon; for
-native mode, restart connected clients and explicitly ask them to use `delegate`.
+native mode, restart connected clients and ask Claude for a `codex` subagent or
+Codex for a `claude` agent.
 
 See [SECURITY.md](../SECURITY.md) for reporting vulnerabilities.

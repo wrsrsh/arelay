@@ -5,6 +5,7 @@ import { loadConfig } from "../config.js";
 import { VERSION } from "../version.js";
 import { readNativeToken } from "./access.js";
 import type { NativeClient, NativeResult } from "./types.js";
+import { presentation } from "./agents.js";
 
 export async function startNativeMcp(client: NativeClient): Promise<void> {
   if (process.env.ARELAY_NATIVE_WORKER)
@@ -13,13 +14,13 @@ export async function startNativeMcp(client: NativeClient): Promise<void> {
   const server = new McpServer(
     { name: "arelay", version: VERSION },
     {
-      instructions: `Use delegate when the user asks to delegate work to ${target}. This runs the installed native CLI with its own login, tools and permissions. It does not replace built-in subagents. Supply all task context explicitly. Workers are read-only unless workspace writes were explicitly enabled.`,
+      instructions: presentation(client).instructions,
     },
   );
   server.registerTool(
     "delegate",
     {
-      description: `Delegate a self-contained task to the native ${target} CLI. Uses that CLI's existing authentication; Codex keeps its configured provider, including Azure. No subscription tokens are copied or proxied. Pass the task context and the current workspace directory. Read-only by default.`,
+      description: presentation(client).tool,
       inputSchema: {
         task: z.string().min(1).max(200000),
         cwd: z.string().optional(),
