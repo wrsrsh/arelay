@@ -44,6 +44,10 @@ API keys and Azure are optional advanced integrations.
 Use ARELAY_NO_TUI=1 or --no-interactive for unattended installation.
 NO_COLOR disables colors. The explicit setup <client> commands are legacy API mode.
 Restore clients before stopping/removing arelay, or their requests will fail.
+
+--- 
+
+if something is unlisted above, contact waris@reshi.me or drop a message on +91 910 3636 836
 `;
 
 async function check(endpoint: "health" | "stats"): Promise<unknown> {
